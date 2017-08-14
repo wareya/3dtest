@@ -58,8 +58,8 @@ float rotation_y = 0;
 float rotation_z = 0;
 
 float x = 0;
-float y = 0;
-float z = -256;
+float y = -256;
+float z = 256;
 
 // multiplies a by b, storing the result in a
 void m4mult(float * a, float * b)
@@ -376,6 +376,7 @@ struct renderer {
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         glEnable(GL_CULL_FACE);
+        //glDisable(GL_CULL_FACE);
         glEnable(GL_PRIMITIVE_RESTART);
         glPrimitiveRestartIndex(65535);
         //glFrontFace(GL_CCW);
@@ -810,9 +811,9 @@ struct renderer {
         };
         
         float translation[16] = {
-            1.0f, 0.0f, 0.0f,    x,
-            0.0f, 1.0f, 0.0f,    y,
-            0.0f, 0.0f, 1.0f,    z,
+            1.0f, 0.0f, 0.0f,   -x,
+            0.0f, 1.0f, 0.0f,   -y,
+            0.0f, 0.0f, 1.0f,   -z,
             0.0f, 0.0f, 0.0f, 1.0f
         };
         
@@ -959,25 +960,60 @@ struct renderer {
         
         float s = 128;
         const vertex vertices[4*6] = {
-            
+            // top
+            { s,-s,-s, 0.0f, 0.0f, 0.0f,-1.0f, 0.0f},
+            {-s,-s,-s, 1.0f, 0.0f, 0.0f,-1.0f, 0.0f},
+            { s,-s, s, 0.0f, 1.0f, 0.0f,-1.0f, 0.0f},
+            {-s,-s, s, 1.0f, 1.0f, 0.0f,-1.0f, 0.0f},
+            // bottom
+            {-s, s,-s, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+            { s, s,-s, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+            {-s, s, s, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f},
+            { s, s, s, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f},
+            // left
+            {-s,-s,-s, 0.0f, 0.0f,-1.0f, 0.0f, 0.0f},
+            {-s, s,-s, 1.0f, 0.0f,-1.0f, 0.0f, 0.0f},
+            {-s,-s, s, 0.0f, 1.0f,-1.0f, 0.0f, 0.0f},
+            {-s, s, s, 1.0f, 1.0f,-1.0f, 0.0f, 0.0f},
+            // right
+            { s, s,-s, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+            { s,-s,-s, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+            { s, s, s, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f},
+            { s,-s, s, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f},
+            // front or back
+            {-s,-s,-s, 0.0f, 0.0f, 0.0f, 0.0f,-1.0f},
+            { s,-s,-s, 1.0f, 0.0f, 0.0f, 0.0f,-1.0f},
+            {-s, s,-s, 0.0f, 1.0f, 0.0f, 0.0f,-1.0f},
+            { s, s,-s, 1.0f, 1.0f, 0.0f, 0.0f,-1.0f},
+            // opposite
+            { s,-s, s, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+            {-s,-s, s, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+            { s, s, s, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+            {-s, s, s, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
         };
         // 65535
-        const char indexes1[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
-        const char indexes2[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+        const unsigned short indexes[] = {
+            0, 1, 2, 3, 65535,
+            4, 5, 6, 7, 65535,
+            8, 9, 10, 11, 65535,
+            12, 13, 14, 15, 65535,
+            16, 17, 18, 19, 65535,
+            20, 21, 22, 23
+        };
         
         float translation[16] = {
-            scale,  0.0f, 0.0f,   -x,
-             0.0f, scale, 0.0f,   -y,
-             0.0f,  0.0f, scale,  -z,
+            scale,  0.0f, 0.0f,    x,
+             0.0f, scale, 0.0f,    y,
+             0.0f,  0.0f, scale,   z,
              0.0f,  0.0f, 0.0f, 1.0f
         };
         
         glUniformMatrix4fv(glGetUniformLocation(program, "translation"), 1, 0, translation);
         glBindTexture(GL_TEXTURE_2D, texture->texid);
         
-        //glBufferData(GL_ARRAY_BUFFER, sizeof(vertices1), vertices1,  GL_DYNAMIC_DRAW);
-        //glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexes1), indexes1, GL_DYNAMIC_DRAW);
-        //glDrawElements(GL_TRIANGLE_STRIP, sizeof(indexes1)/sizeof(indexes1[0]), GL_UNSIGNED_BYTE, 0);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,  GL_DYNAMIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexes), indexes, GL_DYNAMIC_DRAW);
+        glDrawElements(GL_TRIANGLE_STRIP, sizeof(indexes)/sizeof(indexes[0]), GL_UNSIGNED_SHORT, 0);
         
         //glBufferData(GL_ARRAY_BUFFER, sizeof(vertices2), vertices2,  GL_DYNAMIC_DRAW);
         //glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexes2), indexes2, GL_DYNAMIC_DRAW);
@@ -1190,33 +1226,32 @@ int main (int argc, char ** argv)
         float walkspeed = 400;
         if(glfwGetKey(win, GLFW_KEY_E))
         {
-            z += walkspeed*delta*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-            x += walkspeed*delta*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-            y += walkspeed*delta*sin(deg2rad(rotation_x));
-        }
-        if(glfwGetKey(win, GLFW_KEY_D))
-        {
             z -= walkspeed*delta*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
             x -= walkspeed*delta*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
             y -= walkspeed*delta*sin(deg2rad(rotation_x));
         }
+        if(glfwGetKey(win, GLFW_KEY_D))
+        {
+            z += walkspeed*delta*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
+            x += walkspeed*delta*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
+            y += walkspeed*delta*sin(deg2rad(rotation_x));
+        }
         
         if(glfwGetKey(win, GLFW_KEY_W))
-        {
-            z -= walkspeed*delta*sin(deg2rad(rotation_y));
-            x += walkspeed*delta*cos(deg2rad(rotation_y));
-        }
-        if(glfwGetKey(win, GLFW_KEY_F))
         {
             z += walkspeed*delta*sin(deg2rad(rotation_y));
             x -= walkspeed*delta*cos(deg2rad(rotation_y));
         }
+        if(glfwGetKey(win, GLFW_KEY_F))
+        {
+            z -= walkspeed*delta*sin(deg2rad(rotation_y));
+            x += walkspeed*delta*cos(deg2rad(rotation_y));
+        }
         
         myrenderer.cycle_start();
         
-        myrenderer.draw_box(wood, 0, 0, -256, 1);
-        myrenderer.draw_box(wood, 64, 96, -64, 1);
-        myrenderer.draw_box(wood, 64, 96, -64, 1);
+        myrenderer.draw_box(wood, 0, -256-96, -256, 1);
+        myrenderer.draw_box(wood, 64, -96, -256+32, 1);
         myrenderer.draw_terrain(dirt, 0, 0, 0, 1);
         myrenderer.draw_cubemap(sky);
         
