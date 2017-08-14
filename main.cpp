@@ -83,8 +83,8 @@ void m4mult(float * a, float * b)
 }
 
 
-int msaa = 1;
-float viewPortRes = 0.25;
+int msaa = 8;
+float viewPortRes = 2.0;
 
 struct renderer {
     // TODO: FIXME: add a real reference counter
@@ -887,7 +887,6 @@ struct renderer {
         int currtex = 0;
         
         int last_draw_buffer = GL_COLOR_ATTACHMENT0;
-        puts("drawing to GL_COLOR_ATTACHMENT0");
         
         auto BUFFER_A = [&]()
         {
@@ -895,7 +894,6 @@ struct renderer {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
             glDrawBuffer(GL_COLOR_ATTACHMENT1);
             last_draw_buffer = GL_COLOR_ATTACHMENT1;
-            puts("drawing to GL_COLOR_ATTACHMENT1");
         };
         auto BUFFER_B = [&]()
         {
@@ -903,15 +901,11 @@ struct renderer {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
             glDrawBuffer(GL_COLOR_ATTACHMENT2);
             last_draw_buffer = GL_COLOR_ATTACHMENT2;
-            puts("drawing to GL_COLOR_ATTACHMENT2");
         };
         auto BUFFER_DONE = [&]()
         {
             glBindFramebuffer(GL_READ_FRAMEBUFFER, FBO);
             glReadBuffer(last_draw_buffer);
-            if(last_draw_buffer == GL_COLOR_ATTACHMENT0) puts("copying from GL_COLOR_ATTACHMENT0");
-            if(last_draw_buffer == GL_COLOR_ATTACHMENT1) puts("copying from GL_COLOR_ATTACHMENT1");
-            if(last_draw_buffer == GL_COLOR_ATTACHMENT2) puts("copying from GL_COLOR_ATTACHMENT2");
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glDrawBuffer(GL_BACK);
             last_draw_buffer = GL_BACK;
@@ -921,21 +915,18 @@ struct renderer {
         {
             if(currtex == 0)
             {
-                puts("reading from FBOtexture0");
                 BUFFER_A();
                 currtex = 2;
                 glBindTexture(GL_TEXTURE_2D, FBOtexture0);
             }
             else if(currtex == 2)
             {
-                puts("reading from FBOtexture1");
                 BUFFER_B();
                 currtex = 1;
                 glBindTexture(GL_TEXTURE_2D, FBOtexture1);
             }
             if(currtex == 1)
             {
-                puts("reading from FBOtexture2");
                 BUFFER_A();
                 currtex = 2;
                 glBindTexture(GL_TEXTURE_2D, FBOtexture2);
@@ -950,8 +941,6 @@ struct renderer {
         
         BUFFER_DONE();
         glBlitFramebuffer(0,0,w,h,0,0,w,h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        
-        puts("Frame end dominator");
         
         checkerr(__LINE__);
         
