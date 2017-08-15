@@ -83,8 +83,8 @@ void m4mult(float * a, float * b)
 }
 
 
-int msaa = 8;
-float viewPortRes = 2.0;
+int msaa = 2;
+float viewPortRes = 2.5;
 
 // long term TODO: make the bloom blur buffers low res so that high blur radiuses are cheap instead of expensive
 int bloomradius = 16;
@@ -1190,6 +1190,7 @@ struct renderer {
     const static int terrainsize = 64;
     const static int terrainscale = 64;
     vertex terrain[terrainsize*terrainsize];
+    unsigned short terrainindexes[(terrainsize*2+1)*(terrainsize-1)];
 
     void generate_terrain()
     {
@@ -1268,6 +1269,15 @@ struct renderer {
                 //printf("n: %f %f %f\n", dx, dz, dy);
             }
         }
+        
+        
+        // 65535
+        int i = 0;
+        for(int row = 0; row < terrainsize-1; row++)
+        {
+            for(int x = 0; x < terrainsize; x++) for(int y = 0; y < 2; y++) terrainindexes[i++] = x+(y+row)*terrainsize;
+            terrainindexes[i++] = 65535;
+        }
     }
     void draw_terrain(texture * texture, float x, float y, float z, float scale)
     {
@@ -1282,7 +1292,6 @@ struct renderer {
             generate_terrain();
             init = true;
         }
-        short indexes[terrainsize*2];
         
         float translation[16] = {
             scale,  0.0f, 0.0f,   -x,
@@ -1296,12 +1305,8 @@ struct renderer {
         glBindTexture(GL_TEXTURE_2D, texture->texid);
         glBufferData(GL_ARRAY_BUFFER, sizeof(terrain), terrain,  GL_DYNAMIC_DRAW);
         
-        for(int row = 0; row < terrainsize-1; row++)
-        {
-            for(int x = 0; x < terrainsize; x++) for(int y = 0; y < 2; y++) indexes[y+x*2] = x+(y+row)*terrainsize;
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexes), indexes, GL_DYNAMIC_DRAW);
-            glDrawElements(GL_TRIANGLE_STRIP, sizeof(indexes)/sizeof(indexes[0]), GL_UNSIGNED_SHORT, 0);
-        }
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(terrainindexes), terrainindexes, GL_DYNAMIC_DRAW);
+        glDrawElements(GL_TRIANGLE_STRIP, sizeof(terrainindexes)/sizeof(terrainindexes[0]), GL_UNSIGNED_SHORT, 0);
         
         checkerr(__LINE__);
     }
