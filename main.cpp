@@ -204,6 +204,44 @@ struct renderer {
             stbi_image_free(data[0]);
             stbi_image_free(data[1]);
             stbi_image_free(data[2]);
+            stbi_image_free(data[3]);
+            stbi_image_free(data[4]);
+            stbi_image_free(data[5]);
+            
+            auto end = glfwGetTime();
+            printf("Time: %f\n", end-start);
+            
+            return tex;
+        }
+    }
+    cubemap * load_cubemap_alt(const char * side, const char * top, const char * bottom)
+    {
+        auto start = glfwGetTime();
+        puts("Starting load texture");
+        fflush(stdout);
+        int w, h, n;
+        auto side_data = stbi_load(side, &w, &h, &n, 4);
+        auto top_data = stbi_load(top, &w, &h, &n, 4);
+        auto bottom_data = stbi_load(bottom, &w, &h, &n, 4);
+        unsigned char * data[6];
+        data[0] = side_data;
+        data[1] = side_data;
+        data[2] = side_data;
+        data[3] = side_data;
+        data[4] = top_data;
+        data[5] = bottom_data;
+        puts("Done actual loading");
+        if(!data[0] or !data[1] or !data[2]) return puts("failed to open texture"), nullptr;
+        else
+        {
+            printf("Building texture of size %dx%d\n", w, h);
+            
+            auto tex = new cubemap(data, w, h);
+            
+            puts("Built texture");
+            stbi_image_free(side_data);
+            stbi_image_free(top_data);
+            stbi_image_free(bottom_data);
             
             auto end = glfwGetTime();
             printf("Time: %f\n", end-start);
@@ -478,14 +516,27 @@ struct renderer {
         
         "#version 330 core\n\
         uniform samplerCube skybox;\n\
+        uniform int cylindrical;\n\
         varying vec3 myTexCoord;\n\
         void main()\n\
         {\n\
-            gl_FragColor = texture(skybox, myTexCoord);\n\
+            if(cylindrical != 1)\n\
+                gl_FragColor = texture(skybox, myTexCoord);\n\
+            else\n\
+            {\n\
+                vec2 pole = myTexCoord.xz;\n\
+                float dist = sqrt(pole.x*pole.x + pole.y*pole.y);\n\
+                dist /= sqrt(2);\n\
+                vec3 coord = myTexCoord;\n\
+                coord.xz *= dist;\n\
+                coord = normalize(coord);\n\
+                gl_FragColor = texture(skybox, coord);\n\
+            }\n\
         }\n");
         
         glUseProgram(cubeprogram);
         glUniform1i(glGetUniformLocation(cubeprogram, "skybox"), 0);
+        glUniform1i(glGetUniformLocation(cubeprogram, "cylindrical"), 1);
         
         checkerr(__LINE__);
         
@@ -1339,7 +1390,7 @@ int main (int argc, char ** argv)
     wood->boost = 1;
     auto dirt = myrenderer.load_texture("ground.png");
     if(!dirt) return 0;
-    auto sky = myrenderer.load_cubemap("Daylight Box_", ".bmp");
+    auto sky = myrenderer.load_cubemap_alt("sky.png", "skytop.png", "skybottom.png");
     if(!sky) return 0;
     
     float oldtime = glfwGetTime();
