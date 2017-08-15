@@ -82,17 +82,19 @@ void m4mult(float * a, float * b)
     memcpy(a, output, sizeof(float)*16);
 }
 
+bool postprocessing = false;
+
 // diagonal fov
 float fov = 140;
 
 int msaa = 4;
-float viewPortRes = 4.0f;
+float viewPortRes = postprocessing?4.0f:1.0f;
 
 bool dosharpen = true;
 float sharpenamount = 0.35;
 
 // long term TODO: make the bloom blur buffers low res so that high blur radiuses are cheap instead of expensive
-int bloomradius = 32;
+int bloomradius = 8;
 int bloompasses = 2;
 // fisheye projection post shader
 bool polar = true;
@@ -399,8 +401,13 @@ struct renderer {
         glDeleteShader(vshader);
         checkerr(__LINE__);
     }
+    
+    float viewportscale;
+    
     renderer()
     {
+        if(postprocessing) viewportscale = viewPortRes;
+        else viewportscale = 1.0f;
         glfwSwapInterval(0);
         
         if(!glfwInit()) puts("glfw failed to init"), exit(0);
@@ -557,391 +564,394 @@ struct renderer {
         glGenRenderbuffers(1, &RBOC); 
         glGenRenderbuffers(1, &RBOD); 
         glBindRenderbuffer(GL_RENDERBUFFER, RBOC);
-        glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_RGBA16F, w*viewPortRes, h*viewPortRes);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_RGBA16F, w*viewportscale, h*viewportscale);
         glBindRenderbuffer(GL_RENDERBUFFER, RBOD);
-        glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_DEPTH_COMPONENT32F, w*viewPortRes, h*viewPortRes);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_DEPTH_COMPONENT32F, w*viewportscale, h*viewportscale);
         
         // make framebuffer
         
-        glGenFramebuffers(1, &FBO); 
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
-        checkerr(__LINE__);
-        
-        static float jinctexture[512];
-        
-        for(int i = 0; i < 512; i++)
+        if(postprocessing)
         {
-            if(i == 0) jinctexture[i] = 1.0;
-            else       jinctexture[i] = 2*std::cyl_bessel_j(1, float(i*M_PI)/8)/(float(i*M_PI)/8)*0.5+0.5;
-        }
-        
-        ssam = new postprogram("ssam", 
-        "#version 330 core\n\
-        uniform sampler2D mytexture;\n\
-        uniform sampler2D myJincLookup;\n\
-        uniform float myScale;\n\
-        varying vec2 myTexCoord;\n\
-        #define M_PI 3.1415926435\n\
-        vec2 coord;\n\
-        ivec2 mySize;\n\
-        float scale;\n\
-        vec2 offsetRoundedCoord(int a, int b)\n\
-        {\n\
-            return vec2((floor(coord.x*(mySize.x)-0.5)+a+0.5)/(mySize.x),\n\
-                        (floor(coord.y*(mySize.y)-0.5)+b+0.5)/(mySize.y));\n\
-        }\n\
-        vec4 offsetRoundedPixel(int a, int b)\n\
-        {\n\
-            return texture2D(mytexture, offsetRoundedCoord(a, b));\n\
-        }\n\
-        vec2 interpolationPhase()\n\
-        {\n\
-            return vec2(mod(coord.x*(mySize.x)+0.5, 1),\n\
-                        mod(coord.y*(mySize.y)+0.5, 1));\n\
-        }\n\
-        vec2 lodRoundedCoord(int a, int b, vec2 size)\n\
-        {\n\
-            return vec2((floor(coord.x*(size.x)-0.5)+a+0.5)/(size.x),\n\
-                        (floor(coord.y*(size.y)-0.5)+b+0.5)/(size.y));\n\
-        }\n\
-        vec4 lodRoundedPixel(int a, int b, vec2 size, int lod)\n\
-        {\n\
-            return textureLod(mytexture, lodRoundedCoord(a, b, size), lod);\n\
-        }\n\
-        vec2 downscalingPhase(vec2 size)\n\
-        {\n\
-            return vec2(mod(coord.x*(size.x)+0.5, 1),\n\
-                        mod(coord.y*(size.y)+0.5, 1));\n\
-        }\n\
-        vec4 hermite(vec4 a, vec4 b, vec4 c, vec4 d, float i)\n\
-        {\n\
-            vec4  bw = (c-a)/2;\n\
-            vec4  cw = (d-b)/2;\n\
-            float h00 = i*i*i*2 - i*i*3 + 1;\n\
-            float h10 = i*i*i - i*i*2 + i;\n\
-            float h01 = -i*i*i*2 + i*i*3;\n\
-            float h11 = i*i*i - i*i;\n\
-            return b*h00 + bw*h10 + c*h01 + cw*h11;\n\
-        }\n\
-        vec4 hermiterow(int y, float i)\n\
-        {\n\
-            vec4 c1 = offsetRoundedPixel(-1,y);\n\
-            vec4 c2 = offsetRoundedPixel(-0,y);\n\
-            vec4 c3 = offsetRoundedPixel(+1,y);\n\
-            vec4 c4 = offsetRoundedPixel(+2,y);\n\
-            return hermite(c1, c2, c3, c4, i);\n\
-        }\n\
-        vec4 hermitegrid(float ix, float iy)\n\
-        {\n\
-            vec4 c1 = hermiterow(-1,ix);\n\
-            vec4 c2 = hermiterow(-0,ix);\n\
-            vec4 c3 = hermiterow(+1,ix);\n\
-            vec4 c4 = hermiterow(+2,ix);\n\
-            return hermite(c1, c2, c3, c4, iy);\n\
-        }\n\
-        float jinc(float x)\n\
-        {\n\
-            return texture2D(myJincLookup, vec2(x*8/512, 0)).r*2-1;\n\
-        }\n\
-        float jincwindow(float x, float radius)\n\
-        {\n\
-            if(x < -radius || x > radius) return 0;\n\
-            return jinc(x) * cos(x*M_PI/2/radius);\n\
-        }\n\
-        bool supersamplemode;\n\
-        vec4 supersamplegrid()\n\
-        {\n\
-            int lod = 0;\n\
-            float radius = 1;\n\
-            if(radius < 1) radius = 1;\n\
-            vec2 phase = downscalingPhase(mySize);\n\
-            float ix = phase.x;\n\
-            float iy = phase.y;\n\
-            int lowi  = int(floor(-radius/scale + iy));\n\
-            int highi = int(ceil(radius/scale + iy));\n\
-            int lowj  = int(floor(-radius/scale + ix));\n\
-            int highj = int(ceil(radius/scale + ix));\n\
-            vec4 c = vec4(0);\n\
-            float sampleWeight = 0;\n\
-            for(int i = lowi; i <= highi; i++)\n\
+            glGenFramebuffers(1, &FBO); 
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+            checkerr(__LINE__);
+            
+            static float jinctexture[512];
+            
+            for(int i = 0; i < 512; i++)
+            {
+                if(i == 0) jinctexture[i] = 1.0;
+                else       jinctexture[i] = 2*std::cyl_bessel_j(1, float(i*M_PI)/8)/(float(i*M_PI)/8)*0.5+0.5;
+            }
+            
+            ssam = new postprogram("ssam", 
+            "#version 330 core\n\
+            uniform sampler2D mytexture;\n\
+            uniform sampler2D myJincLookup;\n\
+            uniform float myScale;\n\
+            varying vec2 myTexCoord;\n\
+            #define M_PI 3.1415926435\n\
+            vec2 coord;\n\
+            ivec2 mySize;\n\
+            float scale;\n\
+            vec2 offsetRoundedCoord(int a, int b)\n\
             {\n\
-                for(int j = lowj; j <= highj; j++)\n\
+                return vec2((floor(coord.x*(mySize.x)-0.5)+a+0.5)/(mySize.x),\n\
+                            (floor(coord.y*(mySize.y)-0.5)+b+0.5)/(mySize.y));\n\
+            }\n\
+            vec4 offsetRoundedPixel(int a, int b)\n\
+            {\n\
+                return texture2D(mytexture, offsetRoundedCoord(a, b));\n\
+            }\n\
+            vec2 interpolationPhase()\n\
+            {\n\
+                return vec2(mod(coord.x*(mySize.x)+0.5, 1),\n\
+                            mod(coord.y*(mySize.y)+0.5, 1));\n\
+            }\n\
+            vec2 lodRoundedCoord(int a, int b, vec2 size)\n\
+            {\n\
+                return vec2((floor(coord.x*(size.x)-0.5)+a+0.5)/(size.x),\n\
+                            (floor(coord.y*(size.y)-0.5)+b+0.5)/(size.y));\n\
+            }\n\
+            vec4 lodRoundedPixel(int a, int b, vec2 size, int lod)\n\
+            {\n\
+                return textureLod(mytexture, lodRoundedCoord(a, b, size), lod);\n\
+            }\n\
+            vec2 downscalingPhase(vec2 size)\n\
+            {\n\
+                return vec2(mod(coord.x*(size.x)+0.5, 1),\n\
+                            mod(coord.y*(size.y)+0.5, 1));\n\
+            }\n\
+            vec4 hermite(vec4 a, vec4 b, vec4 c, vec4 d, float i)\n\
+            {\n\
+                vec4  bw = (c-a)/2;\n\
+                vec4  cw = (d-b)/2;\n\
+                float h00 = i*i*i*2 - i*i*3 + 1;\n\
+                float h10 = i*i*i - i*i*2 + i;\n\
+                float h01 = -i*i*i*2 + i*i*3;\n\
+                float h11 = i*i*i - i*i;\n\
+                return b*h00 + bw*h10 + c*h01 + cw*h11;\n\
+            }\n\
+            vec4 hermiterow(int y, float i)\n\
+            {\n\
+                vec4 c1 = offsetRoundedPixel(-1,y);\n\
+                vec4 c2 = offsetRoundedPixel(-0,y);\n\
+                vec4 c3 = offsetRoundedPixel(+1,y);\n\
+                vec4 c4 = offsetRoundedPixel(+2,y);\n\
+                return hermite(c1, c2, c3, c4, i);\n\
+            }\n\
+            vec4 hermitegrid(float ix, float iy)\n\
+            {\n\
+                vec4 c1 = hermiterow(-1,ix);\n\
+                vec4 c2 = hermiterow(-0,ix);\n\
+                vec4 c3 = hermiterow(+1,ix);\n\
+                vec4 c4 = hermiterow(+2,ix);\n\
+                return hermite(c1, c2, c3, c4, iy);\n\
+            }\n\
+            float jinc(float x)\n\
+            {\n\
+                return texture2D(myJincLookup, vec2(x*8/512, 0)).r*2-1;\n\
+            }\n\
+            float jincwindow(float x, float radius)\n\
+            {\n\
+                if(x < -radius || x > radius) return 0;\n\
+                return jinc(x) * cos(x*M_PI/2/radius);\n\
+            }\n\
+            bool supersamplemode;\n\
+            vec4 supersamplegrid()\n\
+            {\n\
+                int lod = 0;\n\
+                float radius = 1;\n\
+                if(radius < 1) radius = 1;\n\
+                vec2 phase = downscalingPhase(mySize);\n\
+                float ix = phase.x;\n\
+                float iy = phase.y;\n\
+                int lowi  = int(floor(-radius/scale + iy));\n\
+                int highi = int(ceil(radius/scale + iy));\n\
+                int lowj  = int(floor(-radius/scale + ix));\n\
+                int highj = int(ceil(radius/scale + ix));\n\
+                vec4 c = vec4(0);\n\
+                float sampleWeight = 0;\n\
+                for(int i = lowi; i <= highi; i++)\n\
                 {\n\
-                    float x = (i-ix)*scale;\n\
-                    float y = (j-iy)*scale;\n\
-                    if(sqrt(x*x+y*y) > radius) continue;\n\
-                    float weight;\n\
-                    weight = jincwindow(sqrt(x*x+y*y), radius);\n\
-                    sampleWeight += weight;\n\
-                    c += lodRoundedPixel(i, j, mySize, lod)*weight;\n\
+                    for(int j = lowj; j <= highj; j++)\n\
+                    {\n\
+                        float x = (i-ix)*scale;\n\
+                        float y = (j-iy)*scale;\n\
+                        if(sqrt(x*x+y*y) > radius) continue;\n\
+                        float weight;\n\
+                        weight = jincwindow(sqrt(x*x+y*y), radius);\n\
+                        sampleWeight += weight;\n\
+                        c += lodRoundedPixel(i, j, mySize, lod)*weight;\n\
+                    }\n\
                 }\n\
+                c /= sampleWeight;\n\
+                return c;\n\
             }\n\
-            c /= sampleWeight;\n\
-            return c;\n\
-        }\n\
-        void main()\n\
-        {\n\
-            mySize = textureSize(mytexture, 0);\n\
-            scale = myScale;\n\
-            coord = myTexCoord;\n\
-            if(scale < 1)\n\
+            void main()\n\
             {\n\
-                gl_FragColor = supersamplegrid();\n\
-            }\n\
-            else\n\
-            {\n\
-                vec2 phase = interpolationPhase();\n\
-                vec4 c = hermitegrid(phase.x, phase.y);\n\
-                gl_FragColor = c;\n\
-            }\n\
-        }\n");
-        
-        glUseProgram(ssam->program);
-        checkerr(__LINE__);
-        glUniform1i(glGetUniformLocation(ssam->program, "mytexture"), 0);
-        glUniform1i(glGetUniformLocation(ssam->program, "myJincLookup"), 1);
-        glUniform1f(glGetUniformLocation(ssam->program, "myScale"), 1/viewPortRes);
-        
-        glActiveTexture(GL_TEXTURE1);
-        glGenTextures(1, &jinctexid);
-        glBindTexture(GL_TEXTURE_2D, jinctexid);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, 512, 1, 0, GL_RED, GL_FLOAT, jinctexture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
+                mySize = textureSize(mytexture, 0);\n\
+                scale = myScale;\n\
+                coord = myTexCoord;\n\
+                if(scale < 1)\n\
+                {\n\
+                    gl_FragColor = supersamplegrid();\n\
+                }\n\
+                else\n\
+                {\n\
+                    vec2 phase = interpolationPhase();\n\
+                    vec4 c = hermitegrid(phase.x, phase.y);\n\
+                    gl_FragColor = c;\n\
+                }\n\
+            }\n");
+            
+            glUseProgram(ssam->program);
+            checkerr(__LINE__);
+            glUniform1i(glGetUniformLocation(ssam->program, "mytexture"), 0);
+            glUniform1i(glGetUniformLocation(ssam->program, "myJincLookup"), 1);
+            glUniform1f(glGetUniformLocation(ssam->program, "myScale"), 1/viewportscale);
+            
+            glActiveTexture(GL_TEXTURE1);
+            glGenTextures(1, &jinctexid);
+            glBindTexture(GL_TEXTURE_2D, jinctexid);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, 512, 1, 0, GL_RED, GL_FLOAT, jinctexture);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
 
-        checkerr(__LINE__);
-        
-        copy = new postprogram("copy", 
-        "#version 330 core\n\
-        uniform sampler2D mytexture;\n\
-        varying vec2 myTexCoord;\n\
-        void main()\n\
-        {\n\
-            gl_FragColor = texture2D(mytexture, myTexCoord);\n\
-        }\n");
-        
-        glUseProgram(copy->program);
-        checkerr(__LINE__);
-        glUniform1i(glGetUniformLocation(copy->program, "mytexture"), 0);
-        checkerr(__LINE__);
-        
-        sharpen = new postprogram("sharpen", 
-        "#version 330 core\n\
-        uniform sampler2D mytexture;\n\
-        varying vec2 myTexCoord;\n\
-        uniform float amount;\n\
-        vec2 offsetCoord(int x, int y, vec2 size)\n\
-        {\n\
-            return vec2((myTexCoord.x*size.x+x)/(size.x),\n\
-                        (myTexCoord.y*size.y+y)/(size.y));\n\
-        }\n\
-        vec4 offsetPixel(int x, int y, vec2 size)\n\
-        {\n\
-            return texture(mytexture, offsetCoord(x, y, size));\n\
-        }\n\
-        void main()\n\
-        {\n\
-            vec2 mySize = textureSize(mytexture, 0);\n\
-            vec4 blurred = vec4(0);\n\
-            float weight = 0;\n\
-            for(int y = -1; y <= 1; y++)\n\
+            checkerr(__LINE__);
+            
+            copy = new postprogram("copy", 
+            "#version 330 core\n\
+            uniform sampler2D mytexture;\n\
+            varying vec2 myTexCoord;\n\
+            void main()\n\
             {\n\
-                for(int x = -1; x <= 1; x++)\n\
+                gl_FragColor = texture2D(mytexture, myTexCoord);\n\
+            }\n");
+            
+            glUseProgram(copy->program);
+            checkerr(__LINE__);
+            glUniform1i(glGetUniformLocation(copy->program, "mytexture"), 0);
+            checkerr(__LINE__);
+            
+            sharpen = new postprogram("sharpen", 
+            "#version 330 core\n\
+            uniform sampler2D mytexture;\n\
+            varying vec2 myTexCoord;\n\
+            uniform float amount;\n\
+            vec2 offsetCoord(int x, int y, vec2 size)\n\
+            {\n\
+                return vec2((myTexCoord.x*size.x+x)/(size.x),\n\
+                            (myTexCoord.y*size.y+y)/(size.y));\n\
+            }\n\
+            vec4 offsetPixel(int x, int y, vec2 size)\n\
+            {\n\
+                return texture(mytexture, offsetCoord(x, y, size));\n\
+            }\n\
+            void main()\n\
+            {\n\
+                vec2 mySize = textureSize(mytexture, 0);\n\
+                vec4 blurred = vec4(0);\n\
+                float weight = 0;\n\
+                for(int y = -1; y <= 1; y++)\n\
                 {\n\
-                    float power = 1-y*y/2 * 1-x*x/2;\n\
-                    weight += power;\n\
-                    blurred += offsetPixel(x, y, mySize) * power;\n\
+                    for(int x = -1; x <= 1; x++)\n\
+                    {\n\
+                        float power = 1-y*y/2 * 1-x*x/2;\n\
+                        weight += power;\n\
+                        blurred += offsetPixel(x, y, mySize) * power;\n\
+                    }\n\
                 }\n\
-            }\n\
-            blurred /= weight;\n\
-            gl_FragColor = texture2D(mytexture, myTexCoord)*(1+amount) - blurred*amount;\n\
-        }\n");
-        
-        glUseProgram(sharpen->program);
-        checkerr(__LINE__);
-        glUniform1i(glGetUniformLocation(sharpen->program, "mytexture"), 0);
-        glUniform1f(glGetUniformLocation(sharpen->program, "amount"), sharpenamount);
-        checkerr(__LINE__);
-        
-        distort = new postprogram("distort", 
-        "#version 330 core\n\
-        uniform sampler2D mytexture;\n\
-        uniform float aspect; // aspect ratio w/h\n\
-        uniform float fov; // half the diagonal fov in radians\n\
-        varying vec2 myTexCoord;\n\
-        #define M_PI 3.1415926435\n\
-        void main()\n\
-        {\n\
-            vec2 aspect_v = normalize(vec2(aspect, 1));\n\
-            // change coord range to -1 ~ +1 then apply aspect ratio within unit circle\n\
-            // we want this coord's diagonals to have distance 1 from 0,0\n\
-            vec2 badcoord = (myTexCoord*2-vec2(1, 1))*aspect_v;\n\
-            float pole = sqrt(badcoord.x*badcoord.x + badcoord.y*badcoord.y);\n\
-            // convert from polar angle to planar distance\n\
-            float dist = tan(pole*fov)/tan(fov);\n\
-            vec2 newcoord = badcoord/pole*dist/aspect_v/2 + vec2(0.5, 0.5);\n\
-            gl_FragColor = texture2D(mytexture, newcoord);\n\
-        }\n");
-        
-        glUseProgram(distort->program);
-        checkerr(__LINE__);
-        glUniform1i(glGetUniformLocation(distort->program, "mytexture"), 0);
-        glUniform1f(glGetUniformLocation(distort->program, "fov"), (fov/180.0*M_PI)/2.0);
-        glUniform1f(glGetUniformLocation(distort->program, "aspect"), float(w)/float(h));
-        checkerr(__LINE__);
-        
-        meme = new postprogram("meme", 
-        "#version 330 core\n\
-        uniform sampler2D mytexture;\n\
-        varying vec2 myTexCoord;\n\
-        void main()\n\
-        {\n\
-            vec4 c1 = texture2D(mytexture, myTexCoord);\n\
-            vec4 c2 = texture2D(mytexture, myTexCoord*0.9+0.05);\n\
-            gl_FragColor = c1*0.8+c2*0.2;\n\
-        }\n");
-        
-        glUseProgram(meme->program);
-        checkerr(__LINE__);
-        glUniform1i(glGetUniformLocation(meme->program, "mytexture"), 0);
-        checkerr(__LINE__);
-        
-        bloom1 = new postprogram("bloom1", 
-        "#version 330 core\n\
-        uniform sampler2D mytexture;\n\
-        uniform int radius;\n\
-        uniform float gamma;\n\
-        varying vec2 myTexCoord;\n\
-        void main()\n\
-        {\n\
-            int diameter = radius*2+1;\n\
-            ivec2 size = textureSize2D(mytexture, 0);\n\
-            vec4 color = vec4(0,0,0,0);\n\
-            float gather = 0;\n\
-            for(int i = -radius; i <= radius; i++)\n\
+                blurred /= weight;\n\
+                gl_FragColor = texture2D(mytexture, myTexCoord)*(1+amount) - blurred*amount;\n\
+            }\n");
+            
+            glUseProgram(sharpen->program);
+            checkerr(__LINE__);
+            glUniform1i(glGetUniformLocation(sharpen->program, "mytexture"), 0);
+            glUniform1f(glGetUniformLocation(sharpen->program, "amount"), sharpenamount);
+            checkerr(__LINE__);
+            
+            distort = new postprogram("distort", 
+            "#version 330 core\n\
+            uniform sampler2D mytexture;\n\
+            uniform float aspect; // aspect ratio w/h\n\
+            uniform float fov; // half the diagonal fov in radians\n\
+            varying vec2 myTexCoord;\n\
+            #define M_PI 3.1415926435\n\
+            void main()\n\
             {\n\
-                float weight = cos(float(i)/(radius+1))*0.5+0.5;\n\
-                gather += weight;\n\
-                color += pow(texture2D(mytexture, myTexCoord+vec2(float(i)/size.x, 0)), vec4(gamma))*weight;\n\
-            }\n\
-            color /= gather;\n\
-            gl_FragColor = pow(color, vec4(1/gamma));\n\
-        }\n");
-        
-        glUseProgram(bloom1->program);
-        checkerr(__LINE__);
-        glUniform1i(glGetUniformLocation(bloom1->program, "mytexture"), 0);
-        glUniform1i(glGetUniformLocation(bloom1->program, "radius"), bloomradius); // FIXME don't base on raw pixel amount
-        glUniform1f(glGetUniformLocation(bloom1->program, "gamma"), 2.2);
-        checkerr(__LINE__);
-        
-        bloom2 = new postprogram("bloom2", 
-        "#version 330 core\n\
-        uniform sampler2D mytexture;\n\
-        uniform int radius;\n\
-        uniform float gamma;\n\
-        varying vec2 myTexCoord;\n\
-        void main()\n\
-        {\n\
-            int diameter = radius*2+1;\n\
-            ivec2 size = textureSize2D(mytexture, 0);\n\
-            vec4 color = vec4(0,0,0,0);\n\
-            float gather = 0;\n\
-            for(int i = -radius; i <= radius; i++)\n\
+                vec2 aspect_v = normalize(vec2(aspect, 1));\n\
+                // change coord range to -1 ~ +1 then apply aspect ratio within unit circle\n\
+                // we want this coord's diagonals to have distance 1 from 0,0\n\
+                vec2 badcoord = (myTexCoord*2-vec2(1, 1))*aspect_v;\n\
+                float pole = sqrt(badcoord.x*badcoord.x + badcoord.y*badcoord.y);\n\
+                // convert from polar angle to planar distance\n\
+                float dist = tan(pole*fov)/tan(fov);\n\
+                vec2 newcoord = badcoord/pole*dist/aspect_v/2 + vec2(0.5, 0.5);\n\
+                gl_FragColor = texture2D(mytexture, newcoord);\n\
+            }\n");
+            
+            glUseProgram(distort->program);
+            checkerr(__LINE__);
+            glUniform1i(glGetUniformLocation(distort->program, "mytexture"), 0);
+            glUniform1f(glGetUniformLocation(distort->program, "fov"), (fov/180.0*M_PI)/2.0);
+            glUniform1f(glGetUniformLocation(distort->program, "aspect"), float(w)/float(h));
+            checkerr(__LINE__);
+            
+            meme = new postprogram("meme", 
+            "#version 330 core\n\
+            uniform sampler2D mytexture;\n\
+            varying vec2 myTexCoord;\n\
+            void main()\n\
             {\n\
-                float weight = cos(float(i)/(radius+1))*0.5+0.5;\n\
-                gather += weight;\n\
-                color += pow(texture2D(mytexture, myTexCoord+vec2(0, float(i)/size.y)), vec4(gamma))*weight;\n\
-            }\n\
-            color /= gather;\n\
-            gl_FragColor = pow(color, vec4(1/gamma));\n\
-        }\n");
-        
-        glUseProgram(bloom2->program);
-        checkerr(__LINE__);
-        glUniform1i(glGetUniformLocation(bloom2->program, "mytexture"), 0);
-        glUniform1i(glGetUniformLocation(bloom2->program, "radius"), bloomradius); // FIXME don't base on raw pixel amount
-        glUniform1f(glGetUniformLocation(bloom2->program, "gamma"), 2.2);
-        checkerr(__LINE__);
-        
-        bloom3 = new postprogram("bloom3", 
-        "#version 330 core\n\
-        uniform sampler2D drybuffer;\n\
-        uniform sampler2D wetbuffer;\n\
-        uniform float ratio;\n\
-        uniform float gamma;\n\
-        varying vec2 myTexCoord;\n\
-        void main()\n\
-        {\n\
-            vec4 color1 = pow(texture2D(drybuffer, myTexCoord), vec4(gamma));\n\
-            vec4 color2 = pow(texture2D(wetbuffer, myTexCoord), vec4(gamma));\n\
-            vec4 color = pow(color1*ratio + color2*(1-ratio), vec4(1/gamma));\n\
-            gl_FragColor = color;\n\
-        }\n");
-        
-        glUseProgram(bloom3->program);
-        checkerr(__LINE__);
-        glUniform1i(glGetUniformLocation(bloom3->program, "wetbuffer"), 0);
-        glUniform1i(glGetUniformLocation(bloom3->program, "drybuffer"), 1);
-        glUniform1f(glGetUniformLocation(bloom3->program, "ratio"), 0.9);
-        glUniform1f(glGetUniformLocation(bloom3->program, "gamma"), 2.2);
-        checkerr(__LINE__);
-        
-        glActiveTexture(GL_TEXTURE0);
-        
-        glGenTextures(1, &FBOtexture0);
-        glGenTextures(1, &FBOtexture1);
-        glGenTextures(1, &FBOtexture2);
-        glGenTextures(1, &FBOtexture3);
-        glGenTextures(1, &FBOtexture4);
-        
-        glBindTexture(GL_TEXTURE_2D, FBOtexture0);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewPortRes, h*viewPortRes, 0, GL_RGB, GL_FLOAT, NULL);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, FBOtexture0, 0);
-        
-        glBindTexture(GL_TEXTURE_2D, FBOtexture1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewPortRes, h*viewPortRes, 0, GL_RGB, GL_FLOAT, NULL);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, FBOtexture1, 0);
-        checkerr(__LINE__);
-        
-        glBindTexture(GL_TEXTURE_2D, FBOtexture2);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2,  GL_TEXTURE_2D, FBOtexture2, 0);
-        checkerr(__LINE__);
-        
-        glBindTexture(GL_TEXTURE_2D, FBOtexture3);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, FBOtexture3, 0);
-        checkerr(__LINE__);
-        
-        glBindTexture(GL_TEXTURE_2D, FBOtexture4);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, FBOtexture4, 0);
-        checkerr(__LINE__);
-        
-        checkerr(__LINE__);
+                vec4 c1 = texture2D(mytexture, myTexCoord);\n\
+                vec4 c2 = texture2D(mytexture, myTexCoord*0.9+0.05);\n\
+                gl_FragColor = c1*0.8+c2*0.2;\n\
+            }\n");
+            
+            glUseProgram(meme->program);
+            checkerr(__LINE__);
+            glUniform1i(glGetUniformLocation(meme->program, "mytexture"), 0);
+            checkerr(__LINE__);
+            
+            bloom1 = new postprogram("bloom1", 
+            "#version 330 core\n\
+            uniform sampler2D mytexture;\n\
+            uniform int radius;\n\
+            uniform float gamma;\n\
+            varying vec2 myTexCoord;\n\
+            void main()\n\
+            {\n\
+                int diameter = radius*2+1;\n\
+                ivec2 size = textureSize2D(mytexture, 0);\n\
+                vec4 color = vec4(0,0,0,0);\n\
+                float gather = 0;\n\
+                for(int i = -radius; i <= radius; i++)\n\
+                {\n\
+                    float weight = cos(float(i)/(radius+1))*0.5+0.5;\n\
+                    gather += weight;\n\
+                    color += pow(texture2D(mytexture, myTexCoord+vec2(float(i)/size.x, 0)), vec4(gamma))*weight;\n\
+                }\n\
+                color /= gather;\n\
+                gl_FragColor = pow(color, vec4(1/gamma));\n\
+            }\n");
+            
+            glUseProgram(bloom1->program);
+            checkerr(__LINE__);
+            glUniform1i(glGetUniformLocation(bloom1->program, "mytexture"), 0);
+            glUniform1i(glGetUniformLocation(bloom1->program, "radius"), bloomradius); // FIXME don't base on raw pixel amount
+            glUniform1f(glGetUniformLocation(bloom1->program, "gamma"), 2.2);
+            checkerr(__LINE__);
+            
+            bloom2 = new postprogram("bloom2", 
+            "#version 330 core\n\
+            uniform sampler2D mytexture;\n\
+            uniform int radius;\n\
+            uniform float gamma;\n\
+            varying vec2 myTexCoord;\n\
+            void main()\n\
+            {\n\
+                int diameter = radius*2+1;\n\
+                ivec2 size = textureSize2D(mytexture, 0);\n\
+                vec4 color = vec4(0,0,0,0);\n\
+                float gather = 0;\n\
+                for(int i = -radius; i <= radius; i++)\n\
+                {\n\
+                    float weight = cos(float(i)/(radius+1))*0.5+0.5;\n\
+                    gather += weight;\n\
+                    color += pow(texture2D(mytexture, myTexCoord+vec2(0, float(i)/size.y)), vec4(gamma))*weight;\n\
+                }\n\
+                color /= gather;\n\
+                gl_FragColor = pow(color, vec4(1/gamma));\n\
+            }\n");
+            
+            glUseProgram(bloom2->program);
+            checkerr(__LINE__);
+            glUniform1i(glGetUniformLocation(bloom2->program, "mytexture"), 0);
+            glUniform1i(glGetUniformLocation(bloom2->program, "radius"), bloomradius); // FIXME don't base on raw pixel amount
+            glUniform1f(glGetUniformLocation(bloom2->program, "gamma"), 2.2);
+            checkerr(__LINE__);
+            
+            bloom3 = new postprogram("bloom3", 
+            "#version 330 core\n\
+            uniform sampler2D drybuffer;\n\
+            uniform sampler2D wetbuffer;\n\
+            uniform float ratio;\n\
+            uniform float gamma;\n\
+            varying vec2 myTexCoord;\n\
+            void main()\n\
+            {\n\
+                vec4 color1 = pow(texture2D(drybuffer, myTexCoord), vec4(gamma));\n\
+                vec4 color2 = pow(texture2D(wetbuffer, myTexCoord), vec4(gamma));\n\
+                vec4 color = pow(color1*ratio + color2*(1-ratio), vec4(1/gamma));\n\
+                gl_FragColor = color;\n\
+            }\n");
+            
+            glUseProgram(bloom3->program);
+            checkerr(__LINE__);
+            glUniform1i(glGetUniformLocation(bloom3->program, "wetbuffer"), 0);
+            glUniform1i(glGetUniformLocation(bloom3->program, "drybuffer"), 1);
+            glUniform1f(glGetUniformLocation(bloom3->program, "ratio"), 0.9);
+            glUniform1f(glGetUniformLocation(bloom3->program, "gamma"), 2.2);
+            checkerr(__LINE__);
+            
+            glActiveTexture(GL_TEXTURE0);
+            
+            glGenTextures(1, &FBOtexture0);
+            glGenTextures(1, &FBOtexture1);
+            glGenTextures(1, &FBOtexture2);
+            glGenTextures(1, &FBOtexture3);
+            glGenTextures(1, &FBOtexture4);
+            
+            glBindTexture(GL_TEXTURE_2D, FBOtexture0);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewportscale, h*viewportscale, 0, GL_RGB, GL_FLOAT, NULL);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, FBOtexture0, 0);
+            
+            glBindTexture(GL_TEXTURE_2D, FBOtexture1);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewportscale, h*viewportscale, 0, GL_RGB, GL_FLOAT, NULL);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, FBOtexture1, 0);
+            checkerr(__LINE__);
+            
+            glBindTexture(GL_TEXTURE_2D, FBOtexture2);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2,  GL_TEXTURE_2D, FBOtexture2, 0);
+            checkerr(__LINE__);
+            
+            glBindTexture(GL_TEXTURE_2D, FBOtexture3);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, FBOtexture3, 0);
+            checkerr(__LINE__);
+            
+            glBindTexture(GL_TEXTURE_2D, FBOtexture4);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, FBOtexture4, 0);
+            checkerr(__LINE__);
+            
+            checkerr(__LINE__);
+        }
     }
     
     void cycle_start()
@@ -959,87 +969,89 @@ struct renderer {
             
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FRBO);
             glBindRenderbuffer(GL_RENDERBUFFER, RBOC);
-            glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_RGBA16F, w*viewPortRes, h*viewPortRes);
+            glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_RGBA16F, w*viewportscale, h*viewportscale);
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, RBOC);
             
             glBindRenderbuffer(GL_RENDERBUFFER, RBOD);
-            glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_DEPTH_COMPONENT32F, w*viewPortRes, h*viewPortRes);
+            glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_DEPTH_COMPONENT32F, w*viewportscale, h*viewportscale);
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, RBOD);
             
-            glActiveTexture(GL_TEXTURE0);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
-            
-            glBindTexture(GL_TEXTURE_2D, FBOtexture0);
-            checkerr(__LINE__);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewPortRes, h*viewPortRes, 0, GL_RGB, GL_FLOAT, NULL);
-            checkerr(__LINE__);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            checkerr(__LINE__);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            checkerr(__LINE__);
-            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, FBOtexture0, 0);
-            checkerr(__LINE__);
-            
-            glBindTexture(GL_TEXTURE_2D, FBOtexture1);
-            checkerr(__LINE__);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewPortRes, h*viewPortRes, 0, GL_RGB, GL_FLOAT, NULL);
-            checkerr(__LINE__);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            checkerr(__LINE__);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            checkerr(__LINE__);
-            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, FBOtexture1, 0);
-            checkerr(__LINE__);
-            
-            glBindTexture(GL_TEXTURE_2D, FBOtexture2);
-            checkerr(__LINE__);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
-            checkerr(__LINE__);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            checkerr(__LINE__);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            checkerr(__LINE__);
-            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, FBOtexture2, 0);
-            checkerr(__LINE__);
-            
-            glBindTexture(GL_TEXTURE_2D, FBOtexture3);
-            checkerr(__LINE__);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
-            checkerr(__LINE__);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            checkerr(__LINE__);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            checkerr(__LINE__);
-            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, FBOtexture3, 0);
-            
-            glBindTexture(GL_TEXTURE_2D, FBOtexture4);
-            checkerr(__LINE__);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
-            checkerr(__LINE__);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            checkerr(__LINE__);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            checkerr(__LINE__);
-            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, FBOtexture4, 0);
-            checkerr(__LINE__);
-            
-            glUseProgram(distort->program);
-            checkerr(__LINE__);
-            glUniform1i(glGetUniformLocation(distort->program, "mytexture"), 0);
-            glUniform1f(glGetUniformLocation(distort->program, "aspect"), float(w)/float(h));
+            if(postprocessing)
+            {
+                glActiveTexture(GL_TEXTURE0);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+                
+                glBindTexture(GL_TEXTURE_2D, FBOtexture0);
+                checkerr(__LINE__);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewportscale, h*viewportscale, 0, GL_RGB, GL_FLOAT, NULL);
+                checkerr(__LINE__);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                checkerr(__LINE__);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                checkerr(__LINE__);
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, FBOtexture0, 0);
+                checkerr(__LINE__);
+                
+                glBindTexture(GL_TEXTURE_2D, FBOtexture1);
+                checkerr(__LINE__);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewportscale, h*viewportscale, 0, GL_RGB, GL_FLOAT, NULL);
+                checkerr(__LINE__);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                checkerr(__LINE__);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                checkerr(__LINE__);
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, FBOtexture1, 0);
+                checkerr(__LINE__);
+                
+                glBindTexture(GL_TEXTURE_2D, FBOtexture2);
+                checkerr(__LINE__);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+                checkerr(__LINE__);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                checkerr(__LINE__);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                checkerr(__LINE__);
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, FBOtexture2, 0);
+                checkerr(__LINE__);
+                
+                glBindTexture(GL_TEXTURE_2D, FBOtexture3);
+                checkerr(__LINE__);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+                checkerr(__LINE__);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                checkerr(__LINE__);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                checkerr(__LINE__);
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, FBOtexture3, 0);
+                
+                glBindTexture(GL_TEXTURE_2D, FBOtexture4);
+                checkerr(__LINE__);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+                checkerr(__LINE__);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                checkerr(__LINE__);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                checkerr(__LINE__);
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, FBOtexture4, 0);
+                checkerr(__LINE__);
+                
+                glUseProgram(distort->program);
+                checkerr(__LINE__);
+                glUniform1f(glGetUniformLocation(distort->program, "aspect"), float(w)/float(h));
+            }
         }
         
-        glViewport(0, 0, w*viewPortRes, h*viewPortRes);
+        glViewport(0, 0, w*viewportscale, h*viewportscale);
         
         glUseProgram(program);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FRBO);
@@ -1120,163 +1132,174 @@ struct renderer {
     }
     void cycle_end()
     {
-        glViewport(0, 0, w*viewPortRes, h*viewPortRes);
         
-        glUseProgram(program);
-        glBindVertexArray(MainVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, VIO);
-        
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_BLEND);
-        
-        const vertex vertices[] = {
-            {-1.f, -1.f, 0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
-            { 1.f, -1.f, 0.5f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
-            {-1.f,  1.f, 0.5f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f},
-            { 1.f,  1.f, 0.5f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f},
-        };
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,  GL_DYNAMIC_DRAW);
-        checkerr(__LINE__);
-        
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, FRBO);
-        glFramebufferRenderbuffer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, RBOC);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
-        glDrawBuffer(GL_COLOR_ATTACHMENT0);
-        glBlitFramebuffer(0,0,w*viewPortRes,h*viewPortRes,0,0,w*viewPortRes,h*viewPortRes, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        checkerr(__LINE__);
-        
-        unsigned int last_draw_buffer = GL_COLOR_ATTACHMENT0;
-        unsigned int last_draw_texture = FBOtexture0;
-        
-        auto BUFFER_A = [&]()
+        if(!postprocessing)
         {
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
-        };
-        auto BUFFER_DONE = [&]()
-        {
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, FBO);
-            glReadBuffer(last_draw_buffer);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, FRBO);
+            glReadBuffer(GL_COLOR_ATTACHMENT0);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glDrawBuffer(GL_BACK);
-            last_draw_buffer = GL_BACK;
-        };
-        
-        auto FLIP_SOURCE = [&]()
-        {
-            if(last_draw_buffer == GL_COLOR_ATTACHMENT0)
-            {
-                BUFFER_A();
-                glDrawBuffer(GL_COLOR_ATTACHMENT1);
-                last_draw_texture = FBOtexture1;
-                last_draw_buffer = GL_COLOR_ATTACHMENT1;
-                glBindTexture(GL_TEXTURE_2D, FBOtexture0);
-            }
-            else if(last_draw_buffer == GL_COLOR_ATTACHMENT1)
-            {
-                BUFFER_A();
-                glDrawBuffer(GL_COLOR_ATTACHMENT2);
-                last_draw_texture = FBOtexture2;
-                last_draw_buffer = GL_COLOR_ATTACHMENT2;
-                glBindTexture(GL_TEXTURE_2D, FBOtexture1);
-            }
-            else if(last_draw_buffer == GL_COLOR_ATTACHMENT2)
-            {
-                BUFFER_A();
-                glDrawBuffer(GL_COLOR_ATTACHMENT3);
-                last_draw_texture = FBOtexture3;
-                last_draw_buffer = GL_COLOR_ATTACHMENT3;
-                glBindTexture(GL_TEXTURE_2D, FBOtexture2);
-            }
-            else if(last_draw_buffer == GL_COLOR_ATTACHMENT3)
-            {
-                BUFFER_A();
-                glDrawBuffer(GL_COLOR_ATTACHMENT4);
-                last_draw_texture = FBOtexture4;
-                last_draw_buffer = GL_COLOR_ATTACHMENT4;
-                glBindTexture(GL_TEXTURE_2D, FBOtexture3);
-            }
-            else if(last_draw_buffer == GL_COLOR_ATTACHMENT4)
-            {
-                BUFFER_A();
-                glDrawBuffer(GL_COLOR_ATTACHMENT3);
-                last_draw_texture = FBOtexture3;
-                last_draw_buffer = GL_COLOR_ATTACHMENT3;
-                glBindTexture(GL_TEXTURE_2D, FBOtexture4);
-            }
-        };
-        checkerr(__LINE__);
-        
-        if(polar)
-        {
-            FLIP_SOURCE();
-            glUseProgram(distort->program);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            glBlitFramebuffer(0,0,w,h,0,0,w,h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
         }
-        else
+        if(postprocessing)
         {
-            FLIP_SOURCE();
-            glUseProgram(copy->program);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        }
-        
-        glViewport(0, 0, w, h);
-        
-        if(viewPortRes != 1.0f)
-        {
-            FLIP_SOURCE();
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, jinctexid);
-            glActiveTexture(GL_TEXTURE0);
-            glUseProgram(ssam->program);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            glViewport(0, 0, w*viewportscale, h*viewportscale);
+            //glUseProgram(program);
+            glBindVertexArray(MainVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, VBO);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, VIO);
+            
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
+            
+            const vertex vertices[] = {
+                {-1.f, -1.f, 0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+                { 1.f, -1.f, 0.5f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+                {-1.f,  1.f, 0.5f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f},
+                { 1.f,  1.f, 0.5f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f},
+            };
+            glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,  GL_DYNAMIC_DRAW);
             checkerr(__LINE__);
-        }
-        else
-        {
-            FLIP_SOURCE();
-            glUseProgram(copy->program);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        }
+            
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, FRBO);
+            glFramebufferRenderbuffer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, RBOC);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+            glBlitFramebuffer(0,0,w*viewportscale,h*viewportscale,0,0,w*viewportscale,h*viewportscale, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            checkerr(__LINE__);
         
-        if(bloompasses > 0)
-        {
-            unsigned int bloom_dry_texture = last_draw_texture;
-            for(int i = 0; i < bloompasses; i++)
+            unsigned int last_draw_buffer = GL_COLOR_ATTACHMENT0;
+            unsigned int last_draw_texture = FBOtexture0;
+            
+            auto BUFFER_A = [&]()
+            {
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+            };
+            auto BUFFER_DONE = [&]()
+            {
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, FBO);
+                glReadBuffer(last_draw_buffer);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+                glDrawBuffer(GL_BACK);
+                last_draw_buffer = GL_BACK;
+            };
+            
+            auto FLIP_SOURCE = [&]()
+            {
+                if(last_draw_buffer == GL_COLOR_ATTACHMENT0)
+                {
+                    BUFFER_A();
+                    glDrawBuffer(GL_COLOR_ATTACHMENT1);
+                    last_draw_texture = FBOtexture1;
+                    last_draw_buffer = GL_COLOR_ATTACHMENT1;
+                    glBindTexture(GL_TEXTURE_2D, FBOtexture0);
+                }
+                else if(last_draw_buffer == GL_COLOR_ATTACHMENT1)
+                {
+                    BUFFER_A();
+                    glDrawBuffer(GL_COLOR_ATTACHMENT2);
+                    last_draw_texture = FBOtexture2;
+                    last_draw_buffer = GL_COLOR_ATTACHMENT2;
+                    glBindTexture(GL_TEXTURE_2D, FBOtexture1);
+                }
+                else if(last_draw_buffer == GL_COLOR_ATTACHMENT2)
+                {
+                    BUFFER_A();
+                    glDrawBuffer(GL_COLOR_ATTACHMENT3);
+                    last_draw_texture = FBOtexture3;
+                    last_draw_buffer = GL_COLOR_ATTACHMENT3;
+                    glBindTexture(GL_TEXTURE_2D, FBOtexture2);
+                }
+                else if(last_draw_buffer == GL_COLOR_ATTACHMENT3)
+                {
+                    BUFFER_A();
+                    glDrawBuffer(GL_COLOR_ATTACHMENT4);
+                    last_draw_texture = FBOtexture4;
+                    last_draw_buffer = GL_COLOR_ATTACHMENT4;
+                    glBindTexture(GL_TEXTURE_2D, FBOtexture3);
+                }
+                else if(last_draw_buffer == GL_COLOR_ATTACHMENT4)
+                {
+                    BUFFER_A();
+                    glDrawBuffer(GL_COLOR_ATTACHMENT3);
+                    last_draw_texture = FBOtexture3;
+                    last_draw_buffer = GL_COLOR_ATTACHMENT3;
+                    glBindTexture(GL_TEXTURE_2D, FBOtexture4);
+                }
+            };
+            checkerr(__LINE__);
+            
+            if(polar)
             {
                 FLIP_SOURCE();
-                glUseProgram(bloom1->program);
+                glUseProgram(distort->program);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            }
+            else
+            {
+                FLIP_SOURCE();
+                glUseProgram(copy->program);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            }
+            
+            glViewport(0, 0, w, h);
+            
+            if(viewportscale != 1.0f)
+            {
+                FLIP_SOURCE();
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, jinctexid);
+                glActiveTexture(GL_TEXTURE0);
+                glUseProgram(ssam->program);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 checkerr(__LINE__);
+            }
+            else
+            {
+                FLIP_SOURCE();
+                glUseProgram(copy->program);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            }
+            
+            if(bloompasses > 0)
+            {
+                unsigned int bloom_dry_texture = last_draw_texture;
+                for(int i = 0; i < bloompasses; i++)
+                {
+                    FLIP_SOURCE();
+                    glUseProgram(bloom1->program);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                    checkerr(__LINE__);
+                    
+                    FLIP_SOURCE();
+                    glUseProgram(bloom2->program);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                    checkerr(__LINE__);
+                }
                 
                 FLIP_SOURCE();
-                glUseProgram(bloom2->program);
+                checkerr(__LINE__);
+                glActiveTexture(GL_TEXTURE1);
+                checkerr(__LINE__);
+                glBindTexture(GL_TEXTURE_2D, bloom_dry_texture);
+                checkerr(__LINE__);
+                glActiveTexture(GL_TEXTURE0);
+                glUseProgram(bloom3->program);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 checkerr(__LINE__);
             }
             
-            FLIP_SOURCE();
-            checkerr(__LINE__);
-            glActiveTexture(GL_TEXTURE1);
-            checkerr(__LINE__);
-            glBindTexture(GL_TEXTURE_2D, bloom_dry_texture);
-            checkerr(__LINE__);
-            glActiveTexture(GL_TEXTURE0);
-            glUseProgram(bloom3->program);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            checkerr(__LINE__);
+            if(false)
+            {
+                FLIP_SOURCE();
+                glUseProgram(sharpen->program);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            }
+            
+            BUFFER_DONE();
+            glBlitFramebuffer(0,0,w,h,0,0,w,h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
         }
-        
-        if(false)
-        {
-            FLIP_SOURCE();
-            glUseProgram(sharpen->program);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        }
-        
-        BUFFER_DONE();
-        glBlitFramebuffer(0,0,w,h,0,0,w,h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
         
         checkerr(__LINE__);
         
@@ -1599,7 +1622,7 @@ int main (int argc, char ** argv)
         myrenderer.cycle_end();
         
         auto newtime = glfwGetTime();
-        constexpr float throttle = 1.0/60;
+        constexpr float throttle = 1.0/144;
         if((newtime-starttime) < throttle)
             std::this_thread::sleep_for(std::chrono::duration<float>(throttle-(newtime-starttime)));
     }
