@@ -82,9 +82,10 @@ void m4mult(float * a, float * b)
     memcpy(a, output, sizeof(float)*16);
 }
 
+float fov = 140;
 
-int msaa = 8;
-float viewPortRes = 1.0f;
+int msaa = 4;
+float viewPortRes = 3.0f;
 
 // long term TODO: make the bloom blur buffers low res so that high blur radiuses are cheap instead of expensive
 int bloomradius = 32;
@@ -325,7 +326,7 @@ struct renderer {
     };
     
     // FBO 0: hi-res, 1: downsampled raw, 2/3: double wet buffers (e.g. multipass bloom)
-    unsigned int MainVAO, VIO, VBO, FRBO, RBOC, RBOD, FBO, FBOtexture0, FBOtexture1, FBOtexture2, FBOtexture3, CubeVAO, CubeVBO, CubeVIO, jinctexid;
+    unsigned int MainVAO, VIO, VBO, FRBO, RBOC, RBOD, FBO, FBOtexture0, FBOtexture1, FBOtexture2, FBOtexture3, FBOtexture4, CubeVAO, CubeVBO, CubeVIO, jinctexid;
     int w, h;
     unsigned int vshader;
     unsigned int fshader;
@@ -336,7 +337,7 @@ struct renderer {
     unsigned int cubeprogram;
     
     GLFWwindow * win;
-    postprogram * copy, * ssam, * meme, * bloom1, * bloom2, * bloom3;
+    postprogram * copy, * ssam, * distort, * meme, * bloom1, * bloom2, * bloom3;
     
     void checkcompile(int vshader, int fshader, int program)
     {
@@ -400,7 +401,7 @@ struct renderer {
         
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-        win = glfwCreateWindow(800, 600, "Hello, World!", NULL, NULL);
+        win = glfwCreateWindow(1280, 720, "Hello, World!", NULL, NULL);
         
         if(!win) puts("glfw failed to init"), exit(0);
         glfwMakeContextCurrent(win);
@@ -645,7 +646,7 @@ struct renderer {
         vec4 supersamplegrid()\n\
         {\n\
             int lod = 0;\n\
-            float radius = 1;\n\
+            float radius = 4;\n\
             if(radius < 1) radius = 1;\n\
             vec2 phase = downscalingPhase(mySize);\n\
             float ix = phase.x;\n\
@@ -718,6 +719,34 @@ struct renderer {
         glUseProgram(copy->program);
         checkerr(__LINE__);
         glUniform1i(glGetUniformLocation(copy->program, "mytexture"), 0);
+        checkerr(__LINE__);
+        checkerr(__LINE__);
+        
+        distort = new postprogram("distort", 
+        "#version 330 core\n\
+        uniform sampler2D mytexture;\n\
+        uniform float aspect; // aspect ratio w/h\n\
+        uniform float fov; // half the diagonal fov in radians\n\
+        varying vec2 myTexCoord;\n\
+        #define M_PI 3.1415926435\n\
+        void main()\n\
+        {\n\
+            vec2 aspect_v = normalize(vec2(aspect, 1));\n\
+            // change coord range to -1 ~ +1 then apply aspect ratio within unit circle\n\
+            // we want this coord's diagonals to have distance 1 from 0,0\n\
+            vec2 badcoord = (myTexCoord*2-vec2(1, 1))*aspect_v;\n\
+            float pole = sqrt(badcoord.x*badcoord.x + badcoord.y*badcoord.y);\n\
+            // convert from polar angle to planar distance\n\
+            float dist = tan(pole*fov)/tan(fov);\n\
+            vec2 newcoord = badcoord/pole*dist/aspect_v/2 + vec2(0.5, 0.5);\n\
+            gl_FragColor = texture2D(mytexture, newcoord);\n\
+        }\n");
+        
+        glUseProgram(distort->program);
+        checkerr(__LINE__);
+        glUniform1i(glGetUniformLocation(distort->program, "mytexture"), 0);
+        glUniform1f(glGetUniformLocation(distort->program, "fov"), (fov/180.0*M_PI)/2.0);
+        glUniform1f(glGetUniformLocation(distort->program, "aspect"), float(w)/float(h));
         checkerr(__LINE__);
         
         meme = new postprogram("meme", 
@@ -823,6 +852,7 @@ struct renderer {
         glGenTextures(1, &FBOtexture1);
         glGenTextures(1, &FBOtexture2);
         glGenTextures(1, &FBOtexture3);
+        glGenTextures(1, &FBOtexture4);
         
         glBindTexture(GL_TEXTURE_2D, FBOtexture0);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewPortRes, h*viewPortRes, 0, GL_RGB, GL_FLOAT, NULL);
@@ -831,15 +861,14 @@ struct renderer {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, FBOtexture0, 0);
-        checkerr(__LINE__);
         
         glBindTexture(GL_TEXTURE_2D, FBOtexture1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewPortRes, h*viewPortRes, 0, GL_RGB, GL_FLOAT, NULL);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,  GL_TEXTURE_2D, FBOtexture1, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, FBOtexture1, 0);
         checkerr(__LINE__);
         
         glBindTexture(GL_TEXTURE_2D, FBOtexture2);
@@ -848,7 +877,7 @@ struct renderer {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, FBOtexture2, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2,  GL_TEXTURE_2D, FBOtexture2, 0);
         checkerr(__LINE__);
         
         glBindTexture(GL_TEXTURE_2D, FBOtexture3);
@@ -858,6 +887,15 @@ struct renderer {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, FBOtexture3, 0);
+        checkerr(__LINE__);
+        
+        glBindTexture(GL_TEXTURE_2D, FBOtexture4);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, FBOtexture3, 0);
         checkerr(__LINE__);
         
         checkerr(__LINE__);
@@ -903,7 +941,7 @@ struct renderer {
             
             glBindTexture(GL_TEXTURE_2D, FBOtexture1);
             checkerr(__LINE__);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewPortRes, h*viewPortRes, 0, GL_RGB, GL_FLOAT, NULL);
             checkerr(__LINE__);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -938,7 +976,24 @@ struct renderer {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             checkerr(__LINE__);
             glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, FBOtexture3, 0);
+            
+            glBindTexture(GL_TEXTURE_2D, FBOtexture4);
             checkerr(__LINE__);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+            checkerr(__LINE__);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            checkerr(__LINE__);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            checkerr(__LINE__);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, FBOtexture4, 0);
+            checkerr(__LINE__);
+            
+            glUseProgram(distort->program);
+            checkerr(__LINE__);
+            glUniform1i(glGetUniformLocation(distort->program, "mytexture"), 0);
+            glUniform1f(glGetUniformLocation(distort->program, "aspect"), float(w)/float(h));
         }
         
         glViewport(0, 0, w*viewPortRes, h*viewPortRes);
@@ -958,7 +1013,7 @@ struct renderer {
         
         float u_aspect = float(w)/float(h);
         float a_aspect = atan(1/u_aspect);
-        float a_fovd = deg2rad(140.0f); // diagonal
+        float a_fovd = deg2rad(fov); // diagonal
         
         float u_d = tan(a_fovd/2); // distance to camera is our unit of distance, i.e. 1
         float u_x = u_d*cos(a_aspect);
@@ -1048,8 +1103,6 @@ struct renderer {
         glBlitFramebuffer(0,0,w*viewPortRes,h*viewPortRes,0,0,w*viewPortRes,h*viewPortRes, GL_COLOR_BUFFER_BIT, GL_NEAREST);
         checkerr(__LINE__);
         
-        glViewport(0, 0, w, h);
-        
         int last_draw_buffer = GL_COLOR_ATTACHMENT0;
         
         auto BUFFER_A = [&]()
@@ -1092,12 +1145,34 @@ struct renderer {
             else if(last_draw_buffer == GL_COLOR_ATTACHMENT3)
             {
                 BUFFER_A();
-                glDrawBuffer(GL_COLOR_ATTACHMENT2);
-                last_draw_buffer = GL_COLOR_ATTACHMENT2;
+                glDrawBuffer(GL_COLOR_ATTACHMENT4);
+                last_draw_buffer = GL_COLOR_ATTACHMENT4;
                 glBindTexture(GL_TEXTURE_2D, FBOtexture3);
+            }
+            else if(last_draw_buffer == GL_COLOR_ATTACHMENT4)
+            {
+                BUFFER_A();
+                glDrawBuffer(GL_COLOR_ATTACHMENT3);
+                last_draw_buffer = GL_COLOR_ATTACHMENT3;
+                glBindTexture(GL_TEXTURE_2D, FBOtexture4);
             }
         };
         checkerr(__LINE__);
+        
+        if(true)
+        {
+            FLIP_SOURCE();
+            glUseProgram(distort->program);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        }
+        else
+        {
+            FLIP_SOURCE();
+            glUseProgram(copy->program);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        }
+        
+        glViewport(0, 0, w, h);
         
         if(viewPortRes != 1.0f)
         {
@@ -1460,6 +1535,7 @@ int main (int argc, char ** argv)
         
         myrenderer.draw_box(wood, 0, -256-96, -256, 1);
         myrenderer.draw_box(wood, 64, -96, -256+32, 1);
+        myrenderer.draw_box(wood, 1040, -890, 0, 1);
         myrenderer.draw_terrain(dirt, 0, 0, 0, 1);
         myrenderer.draw_cubemap(sky);
         
