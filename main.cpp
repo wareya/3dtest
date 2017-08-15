@@ -92,7 +92,7 @@ float viewPortRes = 4.0f;
 int bloomradius = 32;
 int bloompasses = 0;
 // fisheye projection post shader
-bool distort = true;
+bool polar = true;
 
 struct renderer {
     // TODO: FIXME: add a real reference counter
@@ -1162,7 +1162,7 @@ struct renderer {
         };
         checkerr(__LINE__);
         
-        if(true)
+        if(polar)
         {
             FLIP_SOURCE();
             glUseProgram(distort->program);
