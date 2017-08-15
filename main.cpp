@@ -83,12 +83,12 @@ void m4mult(float * a, float * b)
 }
 
 
-int msaa = 2;
-float viewPortRes = 2.5;
+int msaa = 8;
+float viewPortRes = 1.0f;
 
 // long term TODO: make the bloom blur buffers low res so that high blur radiuses are cheap instead of expensive
-int bloomradius = 16;
-int bloompasses = 2;
+int bloomradius = 32;
+int bloompasses = 0;
 
 struct renderer {
     // TODO: FIXME: add a real reference counter
@@ -1048,34 +1048,46 @@ struct renderer {
         };
         checkerr(__LINE__);
         
-        FLIP_SOURCE();
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, jinctexid);
-        glActiveTexture(GL_TEXTURE0);
-        glUseProgram(ssam->program);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        checkerr(__LINE__);
-        
-        for(int i = 0; i < bloompasses; i++)
+        if(viewPortRes != 1.0f)
         {
             FLIP_SOURCE();
-            glUseProgram(bloom1->program);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            checkerr(__LINE__);
-            
-            FLIP_SOURCE();
-            glUseProgram(bloom2->program);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, jinctexid);
+            glActiveTexture(GL_TEXTURE0);
+            glUseProgram(ssam->program);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             checkerr(__LINE__);
         }
+        else
+        {
+            FLIP_SOURCE();
+            glUseProgram(copy->program);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        }
         
-        FLIP_SOURCE();
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, FBOtexture1);
-        glActiveTexture(GL_TEXTURE0);
-        glUseProgram(bloom3->program);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        checkerr(__LINE__);
+        if(bloompasses > 0)
+        {
+            for(int i = 0; i < bloompasses; i++)
+            {
+                FLIP_SOURCE();
+                glUseProgram(bloom1->program);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                checkerr(__LINE__);
+                
+                FLIP_SOURCE();
+                glUseProgram(bloom2->program);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                checkerr(__LINE__);
+            }
+            
+            FLIP_SOURCE();
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, FBOtexture1);
+            glActiveTexture(GL_TEXTURE0);
+            glUseProgram(bloom3->program);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            checkerr(__LINE__);
+        }
         
         BUFFER_DONE();
         glBlitFramebuffer(0,0,w,h,0,0,w,h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -1402,7 +1414,7 @@ int main (int argc, char ** argv)
         
         myrenderer.cycle_end();
         
-        constexpr float throttle = 0.005;
+        constexpr float throttle = 0.01;
         if(delta < throttle)
             std::this_thread::sleep_for(std::chrono::duration<float>(throttle-delta));
     }
