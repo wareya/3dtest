@@ -82,14 +82,17 @@ void m4mult(float * a, float * b)
     memcpy(a, output, sizeof(float)*16);
 }
 
+// diagonal fov
 float fov = 140;
 
 int msaa = 4;
-float viewPortRes = 3.0f;
+float viewPortRes = 4.0f;
 
 // long term TODO: make the bloom blur buffers low res so that high blur radiuses are cheap instead of expensive
 int bloomradius = 32;
 int bloompasses = 0;
+// fisheye projection post shader
+bool distort = true;
 
 struct renderer {
     // TODO: FIXME: add a real reference counter
@@ -646,7 +649,7 @@ struct renderer {
         vec4 supersamplegrid()\n\
         {\n\
             int lod = 0;\n\
-            float radius = 4;\n\
+            float radius = 1;\n\
             if(radius < 1) radius = 1;\n\
             vec2 phase = downscalingPhase(mySize);\n\
             float ix = phase.x;\n\
@@ -1468,16 +1471,13 @@ int main (int argc, char ** argv)
     auto sky = myrenderer.load_cubemap_alt("sky.png", "skytop.png", "skybottom.png");
     if(!sky) return 0;
     
-    float oldtime = glfwGetTime();
     while(!glfwWindowShouldClose(win))
     {
-        float newtime;
-        float delta;
-        
         glfwPollEvents();
-        newtime = glfwGetTime();
-        delta = newtime-oldtime;
-        oldtime = newtime;
+        float starttime = glfwGetTime();
+        static float oldtime = starttime;
+        float delta = starttime-oldtime;
+        oldtime = starttime;
         
         static float sensitivity = 1/8.0f;
         static bool continuation = false;
@@ -1541,9 +1541,10 @@ int main (int argc, char ** argv)
         
         myrenderer.cycle_end();
         
-        constexpr float throttle = 0.01;
-        if(delta < throttle)
-            std::this_thread::sleep_for(std::chrono::duration<float>(throttle-delta));
+        auto newtime = glfwGetTime();
+        constexpr float throttle = 1.0/60;
+        if((newtime-starttime) < throttle)
+            std::this_thread::sleep_for(std::chrono::duration<float>(throttle-(newtime-starttime)));
     }
     glfwDestroyWindow(win);
     
