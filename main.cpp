@@ -85,9 +85,9 @@ void m4mult(float * a, float * b)
 bool postprocessing = false;
 
 // diagonal fov
-float fov = 140;
+float fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
 
-int msaa = 4;
+int msaa = postprocessing?4:8;
 float viewPortRes = postprocessing?4.0f:1.0f;
 
 bool dosharpen = true;
