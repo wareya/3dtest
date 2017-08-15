@@ -86,10 +86,14 @@ void m4mult(float * a, float * b)
 int msaa = 8;
 float viewPortRes = 2.0;
 
+// long term TODO: make the bloom blur buffers low res so that high blur radiuses are cheap instead of expensive
+int bloomradius = 16;
+int bloompasses = 2;
+
 struct renderer {
     // TODO: FIXME: add a real reference counter
     struct texture {
-        int w, h, n;
+        int w, h, n, boost;
         GLuint texid;
         texture(const unsigned char * data, int w, int h)
         {
@@ -115,6 +119,8 @@ struct renderer {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
             checkerr(__LINE__);
+            
+            boost = 0;
         }
     };
     texture * load_texture(const char * filename)
@@ -280,7 +286,8 @@ struct renderer {
         }
     };
     
-    unsigned int MainVAO, VIO, VBO, FRBO, RBOC, RBOD, FBO, FBOtexture0, FBOtexture1, FBOtexture2, CubeVAO, CubeVBO, CubeVIO;
+    // FBO 0: hi-res, 1: downsampled raw, 2/3: double wet buffers (e.g. multipass bloom)
+    unsigned int MainVAO, VIO, VBO, FRBO, RBOC, RBOD, FBO, FBOtexture0, FBOtexture1, FBOtexture2, FBOtexture3, CubeVAO, CubeVBO, CubeVIO, jinctexid;
     int w, h;
     unsigned int vshader;
     unsigned int fshader;
@@ -291,7 +298,7 @@ struct renderer {
     unsigned int cubeprogram;
     
     GLFWwindow * win;
-    postprogram * copy, * ssam, * meme;
+    postprogram * copy, * ssam, * meme, * bloom1, * bloom2, * bloom3;
     
     void checkcompile(int vshader, int fshader, int program)
     {
@@ -437,6 +444,8 @@ struct renderer {
         
         "#version 330 core\n\
         uniform sampler2D mytexture;\n\
+        uniform int boost;\n\
+        uniform float gamma;\n\
         varying vec2 myTexCoord;\n\
         varying vec3 myNormal;\n\
         void main()\n\
@@ -444,13 +453,16 @@ struct renderer {
             vec4 color = texture2D(mytexture, myTexCoord, 0);\n\
             float dot = dot(normalize(myNormal), normalize(vec3(-1.0,-1.0,-1.0)));\n\
             dot = max(0, dot);\n\
+            color.rgb = pow(color.rgb, vec3(gamma));\n\
             vec3 diffuse = color.rgb * dot;\n\
-            vec3 ambient = color.rgb * 0.25;\n\
-            gl_FragColor = vec4(diffuse+ambient, 1);\n\
+            vec3 ambient = color.rgb * 0.1;\n\
+            gl_FragColor = vec4(pow(diffuse+ambient, vec3(1/gamma)), 1);\n\
+            if(boost == 1) gl_FragColor.rgb *= 4;\n\
         }\n");
         
         glUseProgram(program);
         glUniform1i(glGetUniformLocation(program, "mytexture"), 0);
+        glUniform1f(glGetUniformLocation(program, "gamma"), 2.2);
         
         glBindVertexArray(CubeVAO);
         mainprogram(cubevshader, cubefshader, cubeprogram, 
@@ -632,7 +644,6 @@ struct renderer {
         glUniform1i(glGetUniformLocation(ssam->program, "myJincLookup"), 1);
         glUniform1f(glGetUniformLocation(ssam->program, "myScale"), 1/viewPortRes);
         
-        unsigned int jinctexid;
         glActiveTexture(GL_TEXTURE1);
         glGenTextures(1, &jinctexid);
         glBindTexture(GL_TEXTURE_2D, jinctexid);
@@ -674,11 +685,93 @@ struct renderer {
         glUniform1i(glGetUniformLocation(meme->program, "mytexture"), 0);
         checkerr(__LINE__);
         
+        bloom1 = new postprogram("bloom1", 
+        "#version 330 core\n\
+        uniform sampler2D mytexture;\n\
+        uniform int radius;\n\
+        uniform float gamma;\n\
+        varying vec2 myTexCoord;\n\
+        void main()\n\
+        {\n\
+            int diameter = radius*2+1;\n\
+            ivec2 size = textureSize2D(mytexture, 0);\n\
+            vec4 color = vec4(0,0,0,0);\n\
+            float gather = 0;\n\
+            for(int i = -radius; i <= radius; i++)\n\
+            {\n\
+                float weight = cos(float(i)/(radius+1))*0.5+0.5;\n\
+                gather += weight;\n\
+                color += pow(texture2D(mytexture, myTexCoord+vec2(float(i)/size.x, 0)), vec4(gamma))*weight;\n\
+            }\n\
+            color /= gather;\n\
+            gl_FragColor = pow(color, vec4(1/gamma));\n\
+        }\n");
+        
+        glUseProgram(bloom1->program);
+        checkerr(__LINE__);
+        glUniform1i(glGetUniformLocation(bloom1->program, "mytexture"), 0);
+        glUniform1i(glGetUniformLocation(bloom1->program, "radius"), bloomradius); // FIXME don't base on raw pixel amount
+        glUniform1f(glGetUniformLocation(bloom1->program, "gamma"), 2.2);
+        checkerr(__LINE__);
+        
+        bloom2 = new postprogram("bloom2", 
+        "#version 330 core\n\
+        uniform sampler2D mytexture;\n\
+        uniform int radius;\n\
+        uniform float gamma;\n\
+        varying vec2 myTexCoord;\n\
+        void main()\n\
+        {\n\
+            int diameter = radius*2+1;\n\
+            ivec2 size = textureSize2D(mytexture, 0);\n\
+            vec4 color = vec4(0,0,0,0);\n\
+            float gather = 0;\n\
+            for(int i = -radius; i <= radius; i++)\n\
+            {\n\
+                float weight = cos(float(i)/(radius+1))*0.5+0.5;\n\
+                gather += weight;\n\
+                color += pow(texture2D(mytexture, myTexCoord+vec2(0, float(i)/size.y)), vec4(gamma))*weight;\n\
+            }\n\
+            color /= gather;\n\
+            gl_FragColor = pow(color, vec4(1/gamma));\n\
+        }\n");
+        
+        glUseProgram(bloom2->program);
+        checkerr(__LINE__);
+        glUniform1i(glGetUniformLocation(bloom2->program, "mytexture"), 0);
+        glUniform1i(glGetUniformLocation(bloom2->program, "radius"), bloomradius); // FIXME don't base on raw pixel amount
+        glUniform1f(glGetUniformLocation(bloom2->program, "gamma"), 2.2);
+        checkerr(__LINE__);
+        
+        bloom3 = new postprogram("bloom3", 
+        "#version 330 core\n\
+        uniform sampler2D drybuffer;\n\
+        uniform sampler2D wetbuffer;\n\
+        uniform float ratio;\n\
+        uniform float gamma;\n\
+        varying vec2 myTexCoord;\n\
+        void main()\n\
+        {\n\
+            vec4 color1 = pow(texture2D(drybuffer, myTexCoord), vec4(gamma));\n\
+            vec4 color2 = pow(texture2D(wetbuffer, myTexCoord), vec4(gamma));\n\
+            vec4 color = pow(color1*ratio + color2*(1-ratio), vec4(1/gamma));\n\
+            gl_FragColor = color;\n\
+        }\n");
+        
+        glUseProgram(bloom3->program);
+        checkerr(__LINE__);
+        glUniform1i(glGetUniformLocation(bloom3->program, "wetbuffer"), 0);
+        glUniform1i(glGetUniformLocation(bloom3->program, "drybuffer"), 1);
+        glUniform1f(glGetUniformLocation(bloom3->program, "ratio"), 0.9);
+        glUniform1f(glGetUniformLocation(bloom3->program, "gamma"), 2.2);
+        checkerr(__LINE__);
+        
         glActiveTexture(GL_TEXTURE0);
         
         glGenTextures(1, &FBOtexture0);
         glGenTextures(1, &FBOtexture1);
         glGenTextures(1, &FBOtexture2);
+        glGenTextures(1, &FBOtexture3);
         
         glBindTexture(GL_TEXTURE_2D, FBOtexture0);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewPortRes, h*viewPortRes, 0, GL_RGB, GL_FLOAT, NULL);
@@ -707,6 +800,15 @@ struct renderer {
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, FBOtexture2, 0);
         checkerr(__LINE__);
         
+        glBindTexture(GL_TEXTURE_2D, FBOtexture3);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, FBOtexture3, 0);
+        checkerr(__LINE__);
+        
         checkerr(__LINE__);
     }
     
@@ -725,7 +827,7 @@ struct renderer {
             
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FRBO);
             glBindRenderbuffer(GL_RENDERBUFFER, RBOC);
-            glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_RGBA8, w*viewPortRes, h*viewPortRes);
+            glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_RGBA16F, w*viewPortRes, h*viewPortRes);
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, RBOC);
             
             glBindRenderbuffer(GL_RENDERBUFFER, RBOD);
@@ -772,6 +874,19 @@ struct renderer {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             checkerr(__LINE__);
             glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, FBOtexture2, 0);
+            checkerr(__LINE__);
+            
+            glBindTexture(GL_TEXTURE_2D, FBOtexture3);
+            checkerr(__LINE__);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
+            checkerr(__LINE__);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            checkerr(__LINE__);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            checkerr(__LINE__);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, FBOtexture3, 0);
             checkerr(__LINE__);
         }
         
@@ -884,24 +999,12 @@ struct renderer {
         
         glViewport(0, 0, w, h);
         
-        
-        int currtex = 0;
-        
         int last_draw_buffer = GL_COLOR_ATTACHMENT0;
         
         auto BUFFER_A = [&]()
         {
             glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
-            glDrawBuffer(GL_COLOR_ATTACHMENT1);
-            last_draw_buffer = GL_COLOR_ATTACHMENT1;
-        };
-        auto BUFFER_B = [&]()
-        {
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
-            glDrawBuffer(GL_COLOR_ATTACHMENT2);
-            last_draw_buffer = GL_COLOR_ATTACHMENT2;
         };
         auto BUFFER_DONE = [&]()
         {
@@ -914,29 +1017,63 @@ struct renderer {
         
         auto FLIP_SOURCE = [&]()
         {
-            if(currtex == 0)
+            if(last_draw_buffer == GL_COLOR_ATTACHMENT0)
             {
                 BUFFER_A();
-                currtex = 2;
+                glDrawBuffer(GL_COLOR_ATTACHMENT1);
+                last_draw_buffer = GL_COLOR_ATTACHMENT1;
                 glBindTexture(GL_TEXTURE_2D, FBOtexture0);
             }
-            else if(currtex == 2)
-            {
-                BUFFER_B();
-                currtex = 1;
-                glBindTexture(GL_TEXTURE_2D, FBOtexture1);
-            }
-            if(currtex == 1)
+            else if(last_draw_buffer == GL_COLOR_ATTACHMENT1)
             {
                 BUFFER_A();
-                currtex = 2;
+                glDrawBuffer(GL_COLOR_ATTACHMENT2);
+                last_draw_buffer = GL_COLOR_ATTACHMENT2;
+                glBindTexture(GL_TEXTURE_2D, FBOtexture1);
+            }
+            else if(last_draw_buffer == GL_COLOR_ATTACHMENT2)
+            {
+                BUFFER_A();
+                glDrawBuffer(GL_COLOR_ATTACHMENT3);
+                last_draw_buffer = GL_COLOR_ATTACHMENT3;
                 glBindTexture(GL_TEXTURE_2D, FBOtexture2);
+            }
+            else if(last_draw_buffer == GL_COLOR_ATTACHMENT3)
+            {
+                BUFFER_A();
+                glDrawBuffer(GL_COLOR_ATTACHMENT2);
+                last_draw_buffer = GL_COLOR_ATTACHMENT2;
+                glBindTexture(GL_TEXTURE_2D, FBOtexture3);
             }
         };
         checkerr(__LINE__);
         
         FLIP_SOURCE();
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, jinctexid);
+        glActiveTexture(GL_TEXTURE0);
         glUseProgram(ssam->program);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        checkerr(__LINE__);
+        
+        for(int i = 0; i < bloompasses; i++)
+        {
+            FLIP_SOURCE();
+            glUseProgram(bloom1->program);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            checkerr(__LINE__);
+            
+            FLIP_SOURCE();
+            glUseProgram(bloom2->program);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            checkerr(__LINE__);
+        }
+        
+        FLIP_SOURCE();
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, FBOtexture1);
+        glActiveTexture(GL_TEXTURE0);
+        glUseProgram(bloom3->program);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         checkerr(__LINE__);
         
@@ -1009,6 +1146,7 @@ struct renderer {
         };
         
         glUniformMatrix4fv(glGetUniformLocation(program, "translation"), 1, 0, translation);
+        glUniform1i(glGetUniformLocation(program, "boost"), texture->boost);
         glBindTexture(GL_TEXTURE_2D, texture->texid);
         
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,  GL_DYNAMIC_DRAW);
@@ -1154,6 +1292,7 @@ struct renderer {
         };
         
         glUniformMatrix4fv(glGetUniformLocation(program, "translation"), 1, 0, translation);
+        glUniform1i(glGetUniformLocation(program, "boost"), texture->boost);
         glBindTexture(GL_TEXTURE_2D, texture->texid);
         glBufferData(GL_ARRAY_BUFFER, sizeof(terrain), terrain,  GL_DYNAMIC_DRAW);
         
@@ -1180,6 +1319,7 @@ int main (int argc, char ** argv)
     
     auto wood = myrenderer.load_texture("texture.png");
     if(!wood) return 0;
+    wood->boost = 1;
     auto dirt = myrenderer.load_texture("ground.png");
     if(!dirt) return 0;
     auto sky = myrenderer.load_cubemap("Daylight Box_", ".bmp");
@@ -1257,7 +1397,7 @@ int main (int argc, char ** argv)
         
         myrenderer.cycle_end();
         
-        constexpr float throttle = 0.004;
+        constexpr float throttle = 0.005;
         if(delta < throttle)
             std::this_thread::sleep_for(std::chrono::duration<float>(throttle-delta));
     }
