@@ -31,6 +31,7 @@ limitations under the License.
 
 #include <chrono>
 #include <thread>
+#include <vector>
 
 struct vertex {
     float x, y, z, u, v, nx, ny, nz;
@@ -82,7 +83,7 @@ void m4mult(float * a, float * b)
     memcpy(a, output, sizeof(float)*16);
 }
 
-bool postprocessing = false;
+bool postprocessing = true;
 
 // diagonal fov
 float fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
@@ -92,6 +93,11 @@ float viewPortRes = postprocessing?4.0f:1.0f;
 
 bool dosharpen = true;
 float sharpenamount = 0.35;
+
+
+float units_per_meter = 64;
+
+float gravity = 9.8*units_per_meter; // units per second per second
 
 // long term TODO: make the bloom blur buffers low res so that high blur radiuses are cheap instead of expensive
 int bloomradius = 8;
@@ -1290,7 +1296,7 @@ struct renderer {
                 checkerr(__LINE__);
             }
             
-            if(false)
+            if(dosharpen)
             {
                 FLIP_SOURCE();
                 glUseProgram(sharpen->program);
@@ -1316,7 +1322,7 @@ struct renderer {
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, VIO);
         
-        float s = 128;
+        float s = 0.5;
         const vertex vertices[4*6] = {
             // top
             { s,-s,-s, 0.0f, 0.0f, 0.0f,-1.0f, 0.0f},
@@ -1533,7 +1539,11 @@ struct renderer {
     }
 };
 
+struct projectile {
+    float x, y, z, xspeed, yspeed, zspeed, life;
+};
 
+std::vector<projectile *> shots;
 
 vertex boxes[8];
 
@@ -1550,6 +1560,9 @@ int main (int argc, char ** argv)
     if(!dirt) return 0;
     auto sky = myrenderer.load_cubemap_alt("sky.png", "skytop.png", "skybottom.png");
     if(!sky) return 0;
+    
+    auto junk = myrenderer.load_texture("junk.png");
+    if(!junk) return 0;
     
     while(!glfwWindowShouldClose(win))
     {
@@ -1586,7 +1599,7 @@ int main (int argc, char ** argv)
             continuation = false;
         
         
-        float walkspeed = 400;
+        float walkspeed = 4*units_per_meter;
         if(glfwGetKey(win, GLFW_KEY_E))
         {
             z -= walkspeed*delta*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
@@ -1611,12 +1624,63 @@ int main (int argc, char ** argv)
             x += walkspeed*delta*cos(deg2rad(rotation_y));
         }
         
+        static bool right_waspressed = false;
+        if(glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)
+        {
+            if(!right_waspressed)
+            {
+                right_waspressed = true;
+                puts("making box");
+                
+                auto newshot = new projectile;
+                newshot->x = x;
+                newshot->y = y+8;
+                newshot->z = z;
+                float shotspeed = 18*units_per_meter;
+                newshot->zspeed = -shotspeed*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
+                newshot->xspeed = -shotspeed*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
+                newshot->yspeed = -shotspeed*sin(deg2rad(rotation_x));
+                newshot->life = 5;
+                
+                shots.push_back(newshot);
+            }
+        }
+        else
+            right_waspressed = false;
+        
+        for(int i = 0; i < shots.size(); i++)
+        {
+            auto s = shots[i];
+            s->life -= delta;
+            if(s->life <= 0)
+            {
+                delete s;
+                shots.erase(shots.begin()+(i--));
+            }
+            else
+            {
+                float part_yspeed = gravity*delta/2;
+                s->z += delta*s->zspeed;
+                s->x += delta*s->xspeed;
+                s->y += delta*(s->yspeed+part_yspeed);
+                s->yspeed += gravity*delta;
+            }
+        }
+        
         myrenderer.cycle_start();
         
-        myrenderer.draw_box(wood, 0, -256-96, -256, 1);
-        myrenderer.draw_box(wood, 64, -96, -256+32, 1);
-        myrenderer.draw_box(wood, 1040, -890, 0, 1);
+        for(auto s : shots)
+        {
+            myrenderer.draw_box(junk, s->x, s->y, s->z, 4);
+        }
+        
+        myrenderer.draw_box(wood, 0, -128, 0, units_per_meter);
+        myrenderer.draw_box(wood, 32, -96-64-128, -256-32, 128);
+        myrenderer.draw_box(wood, 0, -96-64-128, -256-32+128, 128);
+        myrenderer.draw_box(wood, 64, -96, -256, 256);
+        myrenderer.draw_box(wood, 1040, -890, 0, 256);
         myrenderer.draw_terrain(dirt, 0, 0, 0, 1);
+        
         myrenderer.draw_cubemap(sky);
         
         myrenderer.cycle_end();
