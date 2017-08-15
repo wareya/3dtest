@@ -88,9 +88,12 @@ float fov = 140;
 int msaa = 4;
 float viewPortRes = 4.0f;
 
+bool dosharpen = true;
+float sharpenamount = 0.35;
+
 // long term TODO: make the bloom blur buffers low res so that high blur radiuses are cheap instead of expensive
 int bloomradius = 32;
-int bloompasses = 0;
+int bloompasses = 2;
 // fisheye projection post shader
 bool polar = true;
 
@@ -340,7 +343,7 @@ struct renderer {
     unsigned int cubeprogram;
     
     GLFWwindow * win;
-    postprogram * copy, * ssam, * distort, * meme, * bloom1, * bloom2, * bloom3;
+    postprogram * copy, * ssam, * distort, * meme, * sharpen, * bloom1, * bloom2, * bloom3;
     
     void checkcompile(int vshader, int fshader, int program)
     {
@@ -596,14 +599,14 @@ struct renderer {
             return vec2(mod(coord.x*(mySize.x)+0.5, 1),\n\
                         mod(coord.y*(mySize.y)+0.5, 1));\n\
         }\n\
-        vec2 lodRoundedPixel(int a, int b, vec2 size)\n\
+        vec2 lodRoundedCoord(int a, int b, vec2 size)\n\
         {\n\
             return vec2((floor(coord.x*(size.x)-0.5)+a+0.5)/(size.x),\n\
                         (floor(coord.y*(size.y)-0.5)+b+0.5)/(size.y));\n\
         }\n\
         vec4 lodRoundedPixel(int a, int b, vec2 size, int lod)\n\
         {\n\
-            return textureLod(mytexture, lodRoundedPixel(a, b, size), lod);\n\
+            return textureLod(mytexture, lodRoundedCoord(a, b, size), lod);\n\
         }\n\
         vec2 downscalingPhase(vec2 size)\n\
         {\n\
@@ -723,6 +726,43 @@ struct renderer {
         checkerr(__LINE__);
         glUniform1i(glGetUniformLocation(copy->program, "mytexture"), 0);
         checkerr(__LINE__);
+        
+        sharpen = new postprogram("sharpen", 
+        "#version 330 core\n\
+        uniform sampler2D mytexture;\n\
+        varying vec2 myTexCoord;\n\
+        uniform float amount;\n\
+        vec2 offsetCoord(int x, int y, vec2 size)\n\
+        {\n\
+            return vec2((myTexCoord.x*size.x+x)/(size.x),\n\
+                        (myTexCoord.y*size.y+y)/(size.y));\n\
+        }\n\
+        vec4 offsetPixel(int x, int y, vec2 size)\n\
+        {\n\
+            return texture(mytexture, offsetCoord(x, y, size));\n\
+        }\n\
+        void main()\n\
+        {\n\
+            vec2 mySize = textureSize(mytexture, 0);\n\
+            vec4 blurred = vec4(0);\n\
+            float weight = 0;\n\
+            for(int y = -1; y <= 1; y++)\n\
+            {\n\
+                for(int x = -1; x <= 1; x++)\n\
+                {\n\
+                    float power = 1-y*y/2 * 1-x*x/2;\n\
+                    weight += power;\n\
+                    blurred += offsetPixel(x, y, mySize) * power;\n\
+                }\n\
+            }\n\
+            blurred /= weight;\n\
+            gl_FragColor = texture2D(mytexture, myTexCoord)*(1+amount) - blurred*amount;\n\
+        }\n");
+        
+        glUseProgram(sharpen->program);
+        checkerr(__LINE__);
+        glUniform1i(glGetUniformLocation(sharpen->program, "mytexture"), 0);
+        glUniform1f(glGetUniformLocation(sharpen->program, "amount"), sharpenamount);
         checkerr(__LINE__);
         
         distort = new postprogram("distort", 
@@ -898,7 +938,7 @@ struct renderer {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, FBOtexture3, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, FBOtexture4, 0);
         checkerr(__LINE__);
         
         checkerr(__LINE__);
@@ -1106,7 +1146,8 @@ struct renderer {
         glBlitFramebuffer(0,0,w*viewPortRes,h*viewPortRes,0,0,w*viewPortRes,h*viewPortRes, GL_COLOR_BUFFER_BIT, GL_NEAREST);
         checkerr(__LINE__);
         
-        int last_draw_buffer = GL_COLOR_ATTACHMENT0;
+        unsigned int last_draw_buffer = GL_COLOR_ATTACHMENT0;
+        unsigned int last_draw_texture = FBOtexture0;
         
         auto BUFFER_A = [&]()
         {
@@ -1128,6 +1169,7 @@ struct renderer {
             {
                 BUFFER_A();
                 glDrawBuffer(GL_COLOR_ATTACHMENT1);
+                last_draw_texture = FBOtexture1;
                 last_draw_buffer = GL_COLOR_ATTACHMENT1;
                 glBindTexture(GL_TEXTURE_2D, FBOtexture0);
             }
@@ -1135,6 +1177,7 @@ struct renderer {
             {
                 BUFFER_A();
                 glDrawBuffer(GL_COLOR_ATTACHMENT2);
+                last_draw_texture = FBOtexture2;
                 last_draw_buffer = GL_COLOR_ATTACHMENT2;
                 glBindTexture(GL_TEXTURE_2D, FBOtexture1);
             }
@@ -1142,6 +1185,7 @@ struct renderer {
             {
                 BUFFER_A();
                 glDrawBuffer(GL_COLOR_ATTACHMENT3);
+                last_draw_texture = FBOtexture3;
                 last_draw_buffer = GL_COLOR_ATTACHMENT3;
                 glBindTexture(GL_TEXTURE_2D, FBOtexture2);
             }
@@ -1149,6 +1193,7 @@ struct renderer {
             {
                 BUFFER_A();
                 glDrawBuffer(GL_COLOR_ATTACHMENT4);
+                last_draw_texture = FBOtexture4;
                 last_draw_buffer = GL_COLOR_ATTACHMENT4;
                 glBindTexture(GL_TEXTURE_2D, FBOtexture3);
             }
@@ -1156,6 +1201,7 @@ struct renderer {
             {
                 BUFFER_A();
                 glDrawBuffer(GL_COLOR_ATTACHMENT3);
+                last_draw_texture = FBOtexture3;
                 last_draw_buffer = GL_COLOR_ATTACHMENT3;
                 glBindTexture(GL_TEXTURE_2D, FBOtexture4);
             }
@@ -1196,6 +1242,7 @@ struct renderer {
         
         if(bloompasses > 0)
         {
+            unsigned int bloom_dry_texture = last_draw_texture;
             for(int i = 0; i < bloompasses; i++)
             {
                 FLIP_SOURCE();
@@ -1210,12 +1257,22 @@ struct renderer {
             }
             
             FLIP_SOURCE();
+            checkerr(__LINE__);
             glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, FBOtexture1);
+            checkerr(__LINE__);
+            glBindTexture(GL_TEXTURE_2D, bloom_dry_texture);
+            checkerr(__LINE__);
             glActiveTexture(GL_TEXTURE0);
             glUseProgram(bloom3->program);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             checkerr(__LINE__);
+        }
+        
+        if(false)
+        {
+            FLIP_SOURCE();
+            glUseProgram(sharpen->program);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         }
         
         BUFFER_DONE();
