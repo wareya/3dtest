@@ -1747,8 +1747,8 @@ int main (int argc, char ** argv)
         else
         {
             starttime = glfwGetTime();
-            //delta = starttime-oldtime;
-            delta = throttle;
+            delta = starttime-oldtime;
+            //delta = throttle;
             oldtime = starttime;
         }
         
