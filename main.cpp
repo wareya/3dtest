@@ -60,7 +60,7 @@ float rotation_z = 0;
 
 float x = 0;
 float y = -256;
-float z = -256;
+float z = 0;
 
 // multiplies a by b, storing the result in a
 void m4mult(float * a, float * b)
@@ -444,7 +444,7 @@ struct renderer {
         //glDisable(GL_CULL_FACE);
         glEnable(GL_PRIMITIVE_RESTART);
         glPrimitiveRestartIndex(65535);
-        //glFrontFace(GL_CCW);
+        glFrontFace(GL_CW);
         
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -1089,20 +1089,27 @@ struct renderer {
         float farf = 10000;
         float projection[16] = {
               fx, 0.0f, 0.0f, 0.0f,
-            0.0f,  -fy, 0.0f, 0.0f,
+            0.0f,   fy, 0.0f, 0.0f,
             0.0f, 0.0f, (nearf+farf)/(nearf-farf), 2*nearf*farf/(nearf-farf),
             0.0f, 0.0f,-1.0f, 0.0f
+        };
+        
+        float coordinates[16] = {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f,-1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f,-1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
         };
         
         float translation[16] = {
             1.0f, 0.0f, 0.0f,   -x,
             0.0f, 1.0f, 0.0f,   -y,
-            0.0f, 0.0f, 1.0f,    z,
+            0.0f, 0.0f, 1.0f,   -z,
             0.0f, 0.0f, 0.0f, 1.0f
         };
         
-        float r_x = -rotation_x/180.0*M_PI;
-        float r_y = -rotation_y/180.0*M_PI;
+        float r_x =  rotation_x/180.0*M_PI;
+        float r_y =  rotation_y/180.0*M_PI;
         float r_z = -rotation_z/180.0*M_PI;
         float rotation_x[16] = {
                 1.0f,     0.0f,     0.0f, 0.0f,
@@ -1123,6 +1130,7 @@ struct renderer {
                 0.0f,     0.0f,     0.0f, 1.0f
         };
         
+        m4mult(projection, coordinates);
         m4mult(rotation_x, rotation_y);
         m4mult(rotation_z, rotation_x);
         m4mult(projection, rotation_z);
@@ -1135,6 +1143,7 @@ struct renderer {
         glUseProgram(program);
         glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, 0, projection);
         
+        glEnable(GL_CULL_FACE);
         
         checkerr(__LINE__);
     }
@@ -1151,6 +1160,7 @@ struct renderer {
         }
         if(postprocessing)
         {
+            glDisable(GL_CULL_FACE);
             glViewport(0, 0, w*viewportscale, h*viewportscale);
             //glUseProgram(program);
             glBindVertexArray(MainVAO);
@@ -1338,24 +1348,24 @@ struct renderer {
             { s, s, s, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f},
             // left
             {-s,-s,-s, 0.0f, 0.0f,-1.0f, 0.0f, 0.0f},
-            {-s, s,-s, 1.0f, 0.0f,-1.0f, 0.0f, 0.0f},
-            {-s,-s, s, 0.0f, 1.0f,-1.0f, 0.0f, 0.0f},
+            {-s, s,-s, 0.0f, 1.0f,-1.0f, 0.0f, 0.0f},
+            {-s,-s, s, 1.0f, 0.0f,-1.0f, 0.0f, 0.0f},
             {-s, s, s, 1.0f, 1.0f,-1.0f, 0.0f, 0.0f},
             // right
-            { s, s,-s, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
-            { s,-s,-s, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f},
-            { s, s, s, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f},
-            { s,-s, s, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f},
+            { s, s,-s, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f},
+            { s,-s,-s, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+            { s, s, s, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f},
+            { s,-s, s, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f},
             // front or back
             {-s,-s,-s, 0.0f, 0.0f, 0.0f, 0.0f,-1.0f},
             { s,-s,-s, 1.0f, 0.0f, 0.0f, 0.0f,-1.0f},
             {-s, s,-s, 0.0f, 1.0f, 0.0f, 0.0f,-1.0f},
             { s, s,-s, 1.0f, 1.0f, 0.0f, 0.0f,-1.0f},
             // opposite
-            { s,-s, s, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {-s,-s, s, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            { s, s, s, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
-            {-s, s, s, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+            { s,-s, s, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+            {-s,-s, s, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+            { s, s, s, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+            {-s, s, s, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
         };
         // 65535
         const unsigned short indexes[] = {
@@ -1370,7 +1380,7 @@ struct renderer {
         float translation[16] = {
             scale,  0.0f, 0.0f,    x,
              0.0f, scale, 0.0f,    y,
-             0.0f,  0.0f, scale,  -z,
+             0.0f,  0.0f, scale,   z,
              0.0f,  0.0f, 0.0f, 1.0f
         };
         
@@ -1497,9 +1507,9 @@ struct renderer {
                 else
                     dz = 0;
                 
-                terrain[i].nx = dx;
+                terrain[i].nx =  dx;
                 terrain[i].ny = -dz;
-                terrain[i].nz = -dy;
+                terrain[i].nz =  dy;
                 //printf("n: %f %f %f\n", dx, dz, dy);
             }
         }
@@ -1539,7 +1549,7 @@ struct renderer {
         float translation[16] = {
             scale,  0.0f, 0.0f,    x,
              0.0f, scale, 0.0f,    y,
-             0.0f,  0.0f, scale,  -z,
+             0.0f,  0.0f, scale,   z,
              0.0f,  0.0f, 0.0f, 1.0f
         };
         
