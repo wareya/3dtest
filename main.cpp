@@ -60,7 +60,7 @@ float rotation_z = 0;
 
 float x = 0;
 float y = -256;
-float z = 256;
+float z = -256;
 
 // multiplies a by b, storing the result in a
 void m4mult(float * a, float * b)
@@ -540,16 +540,18 @@ struct renderer {
         varying vec3 myTexCoord;\n\
         void main()\n\
         {\n\
-            if(cylindrical != 1)\n\
+            if(true)//cylindrical != 1)\n\
                 gl_FragColor = texture(skybox, myTexCoord);\n\
             else\n\
             {\n\
-                vec2 pole = myTexCoord.xz;\n\
-                float dist = sqrt(pole.x*pole.x + pole.y*pole.y);\n\
-                dist /= sqrt(2);\n\
                 vec3 coord = myTexCoord;\n\
-                coord.xz *= dist;\n\
-                coord = normalize(coord);\n\
+                vec2 pole = normalize(myTexCoord.xz);\n\
+                float dist = sqrt(pole.x*pole.x + pole.y*pole.y);\n\
+                float angle = atan(pole.y, pole.x);\n\
+                coord.x = cos(angle)*dist;\n\
+                coord.z = sin(angle)*dist;\n\
+                //coord.y = sqrt(1 - coord.x*coord.x + coord.z*coord.z);\n\
+                //coord = normalize(coord);\n\
                 gl_FragColor = texture(skybox, coord);\n\
             }\n\
         }\n");
@@ -1095,13 +1097,13 @@ struct renderer {
         float translation[16] = {
             1.0f, 0.0f, 0.0f,   -x,
             0.0f, 1.0f, 0.0f,   -y,
-            0.0f, 0.0f, 1.0f,   -z,
+            0.0f, 0.0f, 1.0f,    z,
             0.0f, 0.0f, 0.0f, 1.0f
         };
         
-        float r_x = rotation_x/180.0*M_PI;
-        float r_y = rotation_y/180.0*M_PI;
-        float r_z = rotation_z/180.0*M_PI;
+        float r_x = -rotation_x/180.0*M_PI;
+        float r_y = -rotation_y/180.0*M_PI;
+        float r_z = -rotation_z/180.0*M_PI;
         float rotation_x[16] = {
                 1.0f,     0.0f,     0.0f, 0.0f,
                 0.0f, cos(r_x),-sin(r_x), 0.0f,
@@ -1368,7 +1370,7 @@ struct renderer {
         float translation[16] = {
             scale,  0.0f, 0.0f,    x,
              0.0f, scale, 0.0f,    y,
-             0.0f,  0.0f, scale,   z,
+             0.0f,  0.0f, scale,  -z,
              0.0f,  0.0f, 0.0f, 1.0f
         };
         
@@ -1418,6 +1420,11 @@ struct renderer {
     const static int terrainscale = 64;
     vertex terrain[terrainsize*terrainsize];
     unsigned short terrainindexes[(terrainsize*2+1)*(terrainsize-1)];
+    
+    struct triangle {
+        vertex a, b, c;
+    };
+    std::vector<triangle> terraintriangles;
 
     void generate_terrain()
     {
@@ -1505,6 +1512,15 @@ struct renderer {
             for(int x = 0; x < terrainsize; x++) for(int y = 0; y < 2; y++) terrainindexes[i++] = x+(y+row)*terrainsize;
             terrainindexes[i++] = 65535;
         }
+        
+        for(int y = 0; y < terrainsize-1; y++)
+        {
+            for(int x = 0; x < terrainsize-1; x++)
+            {
+                terraintriangles.push_back(triangle({terrain[x+(y  )], terrain[x+1+(y)], terrain[x  +(y+1)]}));
+                terraintriangles.push_back(triangle({terrain[x+(y+1)], terrain[x+1+(y)], terrain[x+1+(y+1)]}));
+            }
+        }
     }
     void draw_terrain(texture * texture, float x, float y, float z, float scale)
     {
@@ -1521,8 +1537,8 @@ struct renderer {
         }
         
         float translation[16] = {
-            scale,  0.0f, 0.0f,   -x,
-             0.0f, scale, 0.0f,   -y,
+            scale,  0.0f, 0.0f,    x,
+             0.0f, scale, 0.0f,    y,
              0.0f,  0.0f, scale,  -z,
              0.0f,  0.0f, 0.0f, 1.0f
         };
@@ -1586,8 +1602,8 @@ int main (int argc, char ** argv)
                 double xd = xpos-last_xpos;
                 double yd = ypos-last_ypos;
                 
-                rotation_y -= xd*sensitivity; // AROUND y, i.e. horizontal
-                rotation_x -= yd*sensitivity;
+                rotation_y += xd*sensitivity; // AROUND y, i.e. horizontal
+                rotation_x += yd*sensitivity;
                 if(rotation_x >  90) rotation_x =  90;
                 if(rotation_x < -90) rotation_x = -90;
             }
@@ -1602,15 +1618,15 @@ int main (int argc, char ** argv)
         float walkspeed = 4*units_per_meter;
         if(glfwGetKey(win, GLFW_KEY_E))
         {
-            z -= walkspeed*delta*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-            x -= walkspeed*delta*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-            y -= walkspeed*delta*sin(deg2rad(rotation_x));
-        }
-        if(glfwGetKey(win, GLFW_KEY_D))
-        {
             z += walkspeed*delta*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
             x += walkspeed*delta*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
             y += walkspeed*delta*sin(deg2rad(rotation_x));
+        }
+        if(glfwGetKey(win, GLFW_KEY_D))
+        {
+            z -= walkspeed*delta*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
+            x -= walkspeed*delta*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
+            y -= walkspeed*delta*sin(deg2rad(rotation_x));
         }
         
         if(glfwGetKey(win, GLFW_KEY_W))
@@ -1637,9 +1653,9 @@ int main (int argc, char ** argv)
                 newshot->y = y+8;
                 newshot->z = z;
                 float shotspeed = 18*units_per_meter;
-                newshot->zspeed = -shotspeed*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-                newshot->xspeed = -shotspeed*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-                newshot->yspeed = -shotspeed*sin(deg2rad(rotation_x));
+                newshot->zspeed = shotspeed*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
+                newshot->xspeed = shotspeed*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
+                newshot->yspeed = shotspeed*sin(deg2rad(rotation_x));
                 newshot->life = 5;
                 
                 shots.push_back(newshot);
@@ -1675,9 +1691,9 @@ int main (int argc, char ** argv)
         }
         
         myrenderer.draw_box(wood, 0, -128, 0, units_per_meter);
-        myrenderer.draw_box(wood, 32, -96-64-128, -256-32, 128);
-        myrenderer.draw_box(wood, 0, -96-64-128, -256-32+128, 128);
-        myrenderer.draw_box(wood, 64, -96, -256, 256);
+        myrenderer.draw_box(wood, 32, -96-64-128, 256-32, 128);
+        myrenderer.draw_box(wood, 0, -96-64-128, 256-32+128, 128);
+        myrenderer.draw_box(wood, 64, -96, 256, 256);
         myrenderer.draw_box(wood, 1040, -890, 0, 256);
         myrenderer.draw_terrain(dirt, 0, 0, 0, 1);
         
