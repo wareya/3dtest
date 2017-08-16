@@ -26,6 +26,8 @@ limitations under the License.
 #define M_PI 3.1415926435
 #endif
 
+#include <signal.h>
+
 #define deg2rad(X) (X/180.0f*M_PI)
 #define rad2deg(X) (X*180.0f/M_PI)
 
@@ -39,6 +41,122 @@ struct vertex {
 struct basicvertex {
     float x, y, z;
 };
+struct coord {
+    double x, y, z;
+    coord()
+    {
+        x = 0; y = 0; z = 0;
+    }
+    coord(double ax, double ay, double az)
+    {
+        x = ax; y = ay; z = az;
+    }
+    coord(basicvertex v)
+    {
+        x = v.x; y = v.y; z = v.z;
+    }
+    coord(vertex v)
+    {
+        x = v.x; y = v.y; z = v.z;
+    }
+    bool operator==(coord o)
+    {
+        return x == o.x && y == o.y && z == o.z;
+    }
+};
+
+struct collision {
+    coord a, b, c, normal;
+    bool operator==(collision o)
+    {
+        return a == o.a && b == o.b && c == o.c && normal == o.normal;
+    }
+    bool operator!=(collision o)
+    {
+        return !(*this == o);
+    }
+};
+
+collision zero_collision = collision({coord(),coord(),coord(),coord()});
+
+coord sub(coord a, coord b)
+{
+    coord r;
+    r.x = a.x-b.x;
+    r.y = a.y-b.y;
+    r.z = a.z-b.z;
+    return r;
+}
+
+coord mult(coord a, double b)
+{
+    coord r;
+    r.x = a.x*b;
+    r.y = a.y*b;
+    r.z = a.z*b;
+    return r;
+}
+
+double dot(coord a, coord b)
+{
+    double r = 0;
+    r += a.x*b.x;
+    r += a.y*b.y;
+    r += a.z*b.z;
+    return r;
+}
+
+coord normalize(coord a)
+{
+    double magnitude = sqrt(dot(a, a));
+    return mult(a, 1/magnitude);
+}
+
+coord project(coord a, coord b)
+{
+    return mult(b, dot(a, b)/dot(b, b));
+}
+
+coord reject(coord a, coord b)
+{
+    if(dot(a, a) == 0) return coord();
+    return sub(a, project(a, b));
+}
+
+coord cross(coord a, coord b)
+{
+    coord r;
+    r.x = a.y*b.z-a.z*b.y;
+    r.y = a.z*b.x-a.x*b.z;
+    r.z = a.x*b.y-a.y*b.x;
+    return r;
+}
+
+
+double triangle_intersection(coord o, coord d, collision c)
+{
+    coord e1 = sub(c.b, c.a);
+    coord e2 = sub(c.c, c.a);
+    // Calculate planes normal vector
+    coord pvec = cross(d, e2);
+    double det = dot(e1, pvec);
+    
+    if(det == 0)
+        return 0;
+
+    coord tvec = sub(o, c.a);
+    double u = dot(tvec, pvec) / det;
+    if (u < 0 || u > 1)
+        return 0;
+
+    coord qvec = cross(tvec, e1);
+    double v = dot(d, qvec) / det;
+    if (v < 0 || u + v > 1)
+        return 0;
+    
+    return dot(e2, qvec) / det;
+}
+
 
 void checkerr(int line)
 {
@@ -54,13 +172,22 @@ void error_callback(int error, const char* description)
     puts(description);
 }
 
-float rotation_x = 0;
-float rotation_y = 0;
-float rotation_z = 0;
+double rotation_x = 0;
+double rotation_y = 0;
+double rotation_z = 0;
 
-float x = 0;
-float y = -256;
-float z = 0;
+double units_per_meter = 64;
+
+double x = 0;
+double y = -256;
+double z = 0;
+
+double height = 1.75*units_per_meter;
+
+double gravity = 9.8*units_per_meter; // units per second per second
+double friction = 10*units_per_meter; // units per second per second
+//double shock = 5*units_per_meter; // units per second per impact
+
 
 // multiplies a by b, storing the result in a
 void m4mult(float * a, float * b)
@@ -83,27 +210,24 @@ void m4mult(float * a, float * b)
     memcpy(a, output, sizeof(float)*16);
 }
 
-bool postprocessing = true;
+bool postprocessing = false;
 
 // diagonal fov
-float fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
+//double fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
+double fov = 110;
+
+// fisheye projection post shader
+bool polar = true;
 
 int msaa = postprocessing?4:8;
-float viewPortRes = postprocessing?4.0f:1.0f;
+double viewPortRes = postprocessing?3.0f:1.0f;
 
 bool dosharpen = true;
-float sharpenamount = 0.35;
-
-
-float units_per_meter = 64;
-
-float gravity = 9.8*units_per_meter; // units per second per second
+double sharpenamount = 0.35;
 
 // long term TODO: make the bloom blur buffers low res so that high blur radiuses are cheap instead of expensive
 int bloomradius = 8;
-int bloompasses = 2;
-// fisheye projection post shader
-bool polar = true;
+int bloompasses = 0;
 
 struct renderer {
     // TODO: FIXME: add a real reference counter
@@ -408,7 +532,7 @@ struct renderer {
         checkerr(__LINE__);
     }
     
-    float viewportscale;
+    double viewportscale;
     
     renderer()
     {
@@ -806,7 +930,7 @@ struct renderer {
             checkerr(__LINE__);
             glUniform1i(glGetUniformLocation(distort->program, "mytexture"), 0);
             glUniform1f(glGetUniformLocation(distort->program, "fov"), (fov/180.0*M_PI)/2.0);
-            glUniform1f(glGetUniformLocation(distort->program, "aspect"), float(w)/float(h));
+            glUniform1f(glGetUniformLocation(distort->program, "aspect"), double(w)/double(h));
             checkerr(__LINE__);
             
             meme = new postprogram("meme", 
@@ -1055,7 +1179,7 @@ struct renderer {
                 
                 glUseProgram(distort->program);
                 checkerr(__LINE__);
-                glUniform1f(glGetUniformLocation(distort->program, "aspect"), float(w)/float(h));
+                glUniform1f(glGetUniformLocation(distort->program, "aspect"), double(w)/double(h));
             }
         }
         
@@ -1074,19 +1198,19 @@ struct renderer {
         glDepthMask(true);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         
-        float u_aspect = float(w)/float(h);
-        float a_aspect = atan(1/u_aspect);
-        float a_fovd = deg2rad(fov); // diagonal
+        double u_aspect = double(w)/double(h);
+        double a_aspect = atan(1/u_aspect);
+        double a_fovd = deg2rad(fov); // diagonal
         
-        float u_d = tan(a_fovd/2); // distance to camera is our unit of distance, i.e. 1
-        float u_x = u_d*cos(a_aspect);
-        float u_y = u_d*sin(a_aspect);
-        float a_fovx = atan(u_x)*2;
-        float a_fovy = atan(u_y)*2;
-        float fx = 1/tan((a_fovx/2));
-        float fy = 1/tan((a_fovy/2));
-        float nearf = 1;
-        float farf = 10000;
+        double u_d = tan(a_fovd/2); // distance to camera is our unit of distance, i.e. 1
+        double u_x = u_d*cos(a_aspect);
+        double u_y = u_d*sin(a_aspect);
+        double a_fovx = atan(u_x)*2;
+        double a_fovy = atan(u_y)*2;
+        double fx = 1/tan((a_fovx/2));
+        double fy = 1/tan((a_fovy/2));
+        double nearf = 1;
+        double farf = 10000;
         float projection[16] = {
               fx, 0.0f, 0.0f, 0.0f,
             0.0f,   fy, 0.0f, 0.0f,
@@ -1108,9 +1232,9 @@ struct renderer {
             0.0f, 0.0f, 0.0f, 1.0f
         };
         
-        float r_x =  rotation_x/180.0*M_PI;
-        float r_y =  rotation_y/180.0*M_PI;
-        float r_z = -rotation_z/180.0*M_PI;
+        double r_x =  rotation_x/180.0*M_PI;
+        double r_y =  rotation_y/180.0*M_PI;
+        double r_z = -rotation_z/180.0*M_PI;
         float rotation_x[16] = {
                 1.0f,     0.0f,     0.0f, 0.0f,
                 0.0f, cos(r_x),-sin(r_x), 0.0f,
@@ -1327,14 +1451,14 @@ struct renderer {
         glFinish();
         checkerr(__LINE__);
     }
-    void draw_box(texture * texture, float x, float y, float z, float scale)
+    void draw_box(texture * texture, double x, double y, double z, double scale)
     {
         glUseProgram(program);
         glBindVertexArray(MainVAO);
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, VIO);
         
-        float s = 0.5;
+        double s = 0.5;
         const vertex vertices[4*6] = {
             // top
             {-s,-s,-s, 0.0f, 0.0f, 0.0f,-1.0f, 0.0f},
@@ -1431,10 +1555,7 @@ struct renderer {
     vertex terrain[terrainsize*terrainsize];
     unsigned short terrainindexes[(terrainsize*2+1)*(terrainsize-1)];
     
-    struct triangle {
-        vertex a, b, c;
-    };
-    std::vector<triangle> terraintriangles;
+    std::vector<collision> terraintriangles;
 
     void generate_terrain()
     {
@@ -1460,8 +1581,8 @@ struct renderer {
             for(int x = 0; x < terrainsize; x++)
             {
                 int i  = (y-0)*terrainsize + x;
-                float nx;
-                float ny;
+                double nx;
+                double ny;
                 if(y == 0)
                 {
                     int iu = (y-0)*terrainsize + x;
@@ -1498,17 +1619,17 @@ struct renderer {
                     int ir = y*terrainsize + (x+0);
                     nx = terrain[ir].y - terrain[il].y;
                 }
-                float dx = sin(atan(nx/terrainscale));
-                float dy = sin(atan(ny/terrainscale));
-                float ts = dx*dx - dy*dy;
-                float dz;
+                double dx = sin(atan(nx/terrainscale));
+                double dy = sin(atan(ny/terrainscale));
+                double ts = dx*dx - dy*dy;
+                double dz;
                 if(ts < 1.0f)
                     dz = sqrt(1.0f - ts); 
                 else
                     dz = 0;
                 
                 terrain[i].nx =  dx;
-                terrain[i].ny = -dz;
+                terrain[i].ny = -dz; // negative y is up but positive image value is up
                 terrain[i].nz =  dy;
                 //printf("n: %f %f %f\n", dx, dz, dy);
             }
@@ -1527,12 +1648,26 @@ struct renderer {
         {
             for(int x = 0; x < terrainsize-1; x++)
             {
-                terraintriangles.push_back(triangle({terrain[x+(y  )], terrain[x+1+(y)], terrain[x  +(y+1)]}));
-                terraintriangles.push_back(triangle({terrain[x+(y+1)], terrain[x+1+(y)], terrain[x+1+(y+1)]}));
+                auto ra = terrain[x  +(y  )*terrainsize];
+                auto rb = terrain[x  +(y+1)*terrainsize];
+                auto rc = terrain[x+1+(y  )*terrainsize];
+                auto rd = terrain[x+1+(y+1)*terrainsize];
+                auto a = coord(ra);
+                auto b = coord(rb);
+                auto c = coord(rc);
+                auto d = coord(rd);
+                auto c1 = normalize(cross(sub(b, a), sub(c, a)));
+                auto c2 = normalize(cross(sub(b, c), sub(d, c)));
+                auto t1 = collision({a, b, c, c1});
+                auto t2 = collision({c, b, d, c2});
+                terraintriangles.push_back(t1);
+                terraintriangles.push_back(t2);
+                
+                //printf("pushed %f %f %f,  %f %f %f,  %f %f %f\n", c1.a.x, c1.a.y, c1.a.z, c1.b.x, c1.b.y, c1.b.z, c1.c.x, c1.c.y, c1.c.z);
             }
         }
     }
-    void draw_terrain(texture * texture, float x, float y, float z, float scale)
+    void draw_terrain(texture * texture, double x, double y, double z, double scale)
     {
         glUseProgram(program);
         glBindVertexArray(MainVAO);
@@ -1566,7 +1701,9 @@ struct renderer {
 };
 
 struct projectile {
-    float x, y, z, xspeed, yspeed, zspeed, life;
+    double x, y, z, xspeed, yspeed, zspeed, life;
+    collision contact_triangle = zero_collision;
+    bool collided = false;
 };
 
 std::vector<projectile *> shots;
@@ -1593,12 +1730,29 @@ int main (int argc, char ** argv)
     while(!glfwWindowShouldClose(win))
     {
         glfwPollEvents();
-        float starttime = glfwGetTime();
-        static float oldtime = starttime;
-        float delta = starttime-oldtime;
-        oldtime = starttime;
         
-        static float sensitivity = 1/8.0f;
+        static double starttime = glfwGetTime();
+        static double oldtime = starttime;
+        double delta;
+        
+        auto newtime = glfwGetTime();
+        constexpr double throttle = 1.0/60;
+        if((newtime-starttime) < throttle)
+        {
+            std::this_thread::sleep_for(std::chrono::duration<double>(throttle-(newtime-starttime)));
+            delta = throttle;
+            oldtime = starttime;
+            starttime = glfwGetTime();
+        }
+        else
+        {
+            starttime = glfwGetTime();
+            //delta = starttime-oldtime;
+            delta = throttle;
+            oldtime = starttime;
+        }
+        
+        static double sensitivity = 1/8.0f;
         static bool continuation = false;
         if(glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS)
         {
@@ -1625,7 +1779,7 @@ int main (int argc, char ** argv)
             continuation = false;
         
         
-        float walkspeed = 4*units_per_meter;
+        double walkspeed = 8*units_per_meter;//4*units_per_meter;
         if(glfwGetKey(win, GLFW_KEY_E))
         {
             z += walkspeed*delta*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
@@ -1662,11 +1816,11 @@ int main (int argc, char ** argv)
                 newshot->x = x;
                 newshot->y = y+8;
                 newshot->z = z;
-                float shotspeed = 18*units_per_meter;
+                double shotspeed = 8*units_per_meter;
                 newshot->zspeed = shotspeed*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
                 newshot->xspeed = shotspeed*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
                 newshot->yspeed = shotspeed*sin(deg2rad(rotation_x));
-                newshot->life = 5;
+                newshot->life = 3;
                 
                 shots.push_back(newshot);
             }
@@ -1674,8 +1828,11 @@ int main (int argc, char ** argv)
         else
             right_waspressed = false;
         
-        for(int i = 0; i < shots.size(); i++)
+        for(unsigned int i = 0; i < shots.size(); i++)
         {
+            constexpr double safety = 0.001;
+            //constexpr double safety_bounce = 0;
+            constexpr double friction_gap = 1;
             auto s = shots[i];
             s->life -= delta;
             if(s->life <= 0)
@@ -1685,11 +1842,148 @@ int main (int argc, char ** argv)
             }
             else
             {
-                float part_yspeed = gravity*delta/2;
-                s->z += delta*s->zspeed;
-                s->x += delta*s->xspeed;
-                s->y += delta*(s->yspeed+part_yspeed);
-                s->yspeed += gravity*delta;
+                s->yspeed += gravity*delta/2;
+                
+                collision & last_triangle = s->contact_triangle;
+                
+                std::vector<collision> ignore;
+                double time = delta;
+                
+                bool hit_anything_at_all = false;
+                while(time > 0)
+                {
+                    bool reached = false;
+                    for(auto t : myrenderer.terraintriangles)
+                    {
+                        // skip if it's on our ignore list
+                        bool docontinue = false;
+                        for(auto other : ignore) if (t == other) docontinue = true;
+                        if(docontinue) continue;
+                    
+                        auto pos = coord({s->x, s->y, s->z});
+                        auto motion = coord({s->xspeed, s->yspeed, s->zspeed});
+                        
+                        // no collision from behind
+                        double dottie = -dot(normalize(motion), normalize(t.normal));
+                        if(dottie < 0) continue;
+                        
+                        auto speed = sqrt(dot(motion, motion))*time;
+                        
+                        auto d = triangle_intersection(pos, normalize(motion), t);
+                        // collide with things even if they're slightly in front of us
+                        if(d <= speed and d > 0 and speed != 0) // speed != 0 is actually implicit based on the first two
+                        {
+                            double airtime = d/speed*time;
+                            
+                            double newtime = time - airtime;
+                            if(newtime >= time)
+                            {
+                                time = 0;
+                                break;
+                            }
+                            time = newtime;
+                            
+                            for(unsigned int j = 0; j < ignore.size(); j++)
+                            {
+                                // acute or perpendicular angle seam with the triangle we just hit: remove it from the ignore list
+                                if(dot(ignore[j].normal, t.normal) >= 0)
+                                    ignore.erase(ignore.begin()+(j--));
+                            }
+                            ignore.push_back(t);
+                            
+                            if(last_triangle != zero_collision)
+                            {
+                                auto contact_direction = normalize(last_triangle.normal);
+                                
+                                if(triangle_intersection(coord({s->x, s->y, s->z}), contact_direction, last_triangle) < friction_gap*friction_gap)
+                                {
+                                    double speed = sqrt(dot(motion, motion));
+                                    if(speed != 0)
+                                    {
+                                        double normalforce = -dot(contact_direction, coord(0, 1, 0));
+                                        if(normalforce < 0) normalforce = 0;
+                                        double half_newspeed = speed-friction*airtime*normalforce;
+                                        if(half_newspeed < 0) half_newspeed = 0;
+                                        
+                                        motion = mult(motion, half_newspeed/speed);
+                                        
+                                        s->xspeed = motion.x;
+                                        s->yspeed = motion.y;
+                                        s->zspeed = motion.z;
+                                    }
+                                }
+                            }
+                            
+                            s->x += airtime*s->xspeed;
+                            s->y += airtime*s->yspeed;
+                            s->z += airtime*s->zspeed;
+                            
+                            s->x += t.normal.x*safety;
+                            s->y += t.normal.y*safety;
+                            s->z += t.normal.z*safety;
+                            
+                            motion = reject(motion, t.normal);
+                            
+                            s->xspeed = motion.x;
+                            s->yspeed = motion.y;
+                            s->zspeed = motion.z;
+                            
+                            
+                            last_triangle = t;
+                            reached = true;
+                            hit_anything_at_all = true;
+                            
+                            //puts("collision");
+                            
+                            break; // breaks for, not while
+                        }
+                    }
+                    if(!hit_anything_at_all)
+                    {
+                        last_triangle = zero_collision;
+                    }
+                    if(!reached)
+                    {
+                        if(time > 0)
+                        {
+                            if(last_triangle != zero_collision)
+                            {
+                                auto contact_direction = normalize(last_triangle.normal);
+                                auto motion = coord({s->xspeed, s->yspeed, s->zspeed});
+                                
+                                if(triangle_intersection(coord({s->x, s->y, s->z}), contact_direction, last_triangle) < friction_gap*friction_gap)
+                                {
+                                    double speed = sqrt(dot(motion, motion));
+                                    if(speed != 0)
+                                    {
+                                        double normalforce = -dot(contact_direction, coord(0, 1, 0));
+                                        if(normalforce < 0) normalforce = 0;
+                                        double newspeed = speed-friction*time*normalforce;
+                                        if(newspeed < 0) newspeed = 0;
+                                        
+                                        motion = mult(motion, newspeed/speed);
+                                        
+                                        s->xspeed = motion.x;
+                                        s->yspeed = motion.y;
+                                        s->zspeed = motion.z;
+                                    }
+                                }
+                                else
+                                    last_triangle = zero_collision;
+                            }
+                        }
+                        break; // no collisions this iteration
+                    }
+                }
+                
+                if(time > 0)
+                {
+                    s->z += time*s->zspeed;
+                    s->x += time*s->xspeed;
+                    s->y += time*s->yspeed;
+                }
+                
+                s->yspeed += gravity*delta/2;
             }
         }
         
@@ -1710,11 +2004,6 @@ int main (int argc, char ** argv)
         myrenderer.draw_cubemap(sky);
         
         myrenderer.cycle_end();
-        
-        auto newtime = glfwGetTime();
-        constexpr float throttle = 1.0/144;
-        if((newtime-starttime) < throttle)
-            std::this_thread::sleep_for(std::chrono::duration<float>(throttle-(newtime-starttime)));
     }
     glfwDestroyWindow(win);
     
