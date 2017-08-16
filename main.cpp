@@ -444,7 +444,7 @@ struct renderer {
         //glDisable(GL_CULL_FACE);
         glEnable(GL_PRIMITIVE_RESTART);
         glPrimitiveRestartIndex(65535);
-        glFrontFace(GL_CW);
+        glFrontFace(GL_CCW);
         
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -1337,35 +1337,35 @@ struct renderer {
         float s = 0.5;
         const vertex vertices[4*6] = {
             // top
-            { s,-s,-s, 0.0f, 0.0f, 0.0f,-1.0f, 0.0f},
-            {-s,-s,-s, 1.0f, 0.0f, 0.0f,-1.0f, 0.0f},
-            { s,-s, s, 0.0f, 1.0f, 0.0f,-1.0f, 0.0f},
-            {-s,-s, s, 1.0f, 1.0f, 0.0f,-1.0f, 0.0f},
+            {-s,-s,-s, 0.0f, 0.0f, 0.0f,-1.0f, 0.0f},
+            { s,-s,-s, 1.0f, 0.0f, 0.0f,-1.0f, 0.0f},
+            {-s,-s, s, 0.0f, 1.0f, 0.0f,-1.0f, 0.0f},
+            { s,-s, s, 1.0f, 1.0f, 0.0f,-1.0f, 0.0f},
             // bottom
-            {-s, s,-s, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
-            { s, s,-s, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
-            {-s, s, s, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f},
-            { s, s, s, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f},
+            { s, s,-s, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+            {-s, s,-s, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+            { s, s, s, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f},
+            {-s, s, s, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f},
             // left
-            {-s,-s,-s, 0.0f, 0.0f,-1.0f, 0.0f, 0.0f},
             {-s, s,-s, 0.0f, 1.0f,-1.0f, 0.0f, 0.0f},
-            {-s,-s, s, 1.0f, 0.0f,-1.0f, 0.0f, 0.0f},
+            {-s,-s,-s, 0.0f, 0.0f,-1.0f, 0.0f, 0.0f},
             {-s, s, s, 1.0f, 1.0f,-1.0f, 0.0f, 0.0f},
+            {-s,-s, s, 1.0f, 0.0f,-1.0f, 0.0f, 0.0f},
             // right
-            { s, s,-s, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f},
             { s,-s,-s, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
-            { s, s, s, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f},
+            { s, s,-s, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f},
             { s,-s, s, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+            { s, s, s, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f},
             // front or back
-            {-s,-s,-s, 0.0f, 0.0f, 0.0f, 0.0f,-1.0f},
-            { s,-s,-s, 1.0f, 0.0f, 0.0f, 0.0f,-1.0f},
-            {-s, s,-s, 0.0f, 1.0f, 0.0f, 0.0f,-1.0f},
-            { s, s,-s, 1.0f, 1.0f, 0.0f, 0.0f,-1.0f},
+            { s,-s,-s, 0.0f, 0.0f, 0.0f, 0.0f,-1.0f},
+            {-s,-s,-s, 1.0f, 0.0f, 0.0f, 0.0f,-1.0f},
+            { s, s,-s, 0.0f, 1.0f, 0.0f, 0.0f,-1.0f},
+            {-s, s,-s, 1.0f, 1.0f, 0.0f, 0.0f,-1.0f},
             // opposite
-            { s,-s, s, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {-s,-s, s, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            { s, s, s, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
-            {-s, s, s, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+            {-s,-s, s, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+            { s,-s, s, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+            {-s, s, s, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+            { s, s, s, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
         };
         // 65535
         const unsigned short indexes[] = {
@@ -1405,14 +1405,14 @@ struct renderer {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, CubeVIO);
         
         const basicvertex vertices[] = {
-            {-1, 1, 1},
             { 1, 1, 1},
-            {-1,-1, 1},
+            {-1, 1, 1},
             { 1,-1, 1},
-            {-1,-1,-1},
+            {-1,-1, 1},
             { 1,-1,-1},
-            {-1, 1,-1},
+            {-1,-1,-1},
             { 1, 1,-1},
+            {-1, 1,-1},
         };
         // 65535
         const unsigned short indexes1[] = { 0, 1, 2, 3, 4, 5, 6, 7, 65535, 2, 4, 0, 6, 1, 7, 3, 5 };
@@ -1445,8 +1445,8 @@ struct renderer {
             for(int x = 0; x < terrainsize; x++)
             {
                 int i = y*terrainsize + x;
-                terrain[i].x = (x-terrainsize/2+0.5)*terrainscale;
-                terrain[i].z = (y-terrainsize/2+0.5)*terrainscale;
+                terrain[i].x =  (x-terrainsize/2+0.5)*terrainscale;
+                terrain[i].z = -(y-terrainsize/2+0.5)*terrainscale;
                 
                 terrain[i].y = (0.5-data[i]/255.0f)*8;
                 terrain[i].y *= terrainscale;
