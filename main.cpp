@@ -185,7 +185,7 @@ double z = 0;
 double height = 1.75*units_per_meter;
 
 double gravity = 9.8*units_per_meter; // units per second per second
-double friction = 10*units_per_meter; // units per second per second
+double friction = 7*units_per_meter; // units per second per second
 //double shock = 5*units_per_meter; // units per second per impact
 
 
@@ -1853,6 +1853,15 @@ int main (int argc, char ** argv)
                 while(time > 0)
                 {
                     bool reached = false;
+                    
+                    collision goodtriangle = zero_collision;
+                    double gooddistance = 0;
+                    
+                    auto pos = coord({s->x, s->y, s->z});
+                    auto motion = coord({s->xspeed, s->yspeed, s->zspeed});
+                    auto speed = sqrt(dot(motion, motion))*time;
+                    
+                    // select closest collidable triangle
                     for(auto t : myrenderer.terraintriangles)
                     {
                         // skip if it's on our ignore list
@@ -1860,83 +1869,84 @@ int main (int argc, char ** argv)
                         for(auto other : ignore) if (t == other) docontinue = true;
                         if(docontinue) continue;
                     
-                        auto pos = coord({s->x, s->y, s->z});
-                        auto motion = coord({s->xspeed, s->yspeed, s->zspeed});
-                        
                         // no collision from behind
                         double dottie = -dot(normalize(motion), normalize(t.normal));
                         if(dottie < 0) continue;
-                        
-                        auto speed = sqrt(dot(motion, motion))*time;
                         
                         auto d = triangle_intersection(pos, normalize(motion), t);
                         // collide with things even if they're slightly in front of us
                         if(d <= speed and d > 0 and speed != 0) // speed != 0 is actually implicit based on the first two
                         {
-                            double airtime = d/speed*time;
-                            
-                            double newtime = time - airtime;
-                            if(newtime >= time)
+                            if(gooddistance == 0 || d < gooddistance)
                             {
-                                time = 0;
-                                break;
+                                goodtriangle = t;
+                                gooddistance = d;
                             }
-                            time = newtime;
+                        }
+                    }
+                    if(gooddistance > 0)
+                    {
+                        auto t = goodtriangle;
+                        auto d = gooddistance;
+                        
+                        double airtime = d/speed*time;
+                        
+                        double newtime = time - airtime;
+                        if(newtime >= time)
+                        {
+                            time = 0;
+                            break;
+                        }
+                        time = newtime;
+                        
+                        for(unsigned int j = 0; j < ignore.size(); j++)
+                        {
+                            // acute or perpendicular angle seam with the triangle we just hit: remove it from the ignore list
+                            if(dot(ignore[j].normal, t.normal) >= 0)
+                                ignore.erase(ignore.begin()+(j--));
+                        }
+                        ignore.push_back(t);
+                        
+                        if(last_triangle != zero_collision)
+                        {
+                            auto contact_direction = normalize(last_triangle.normal);
                             
-                            for(unsigned int j = 0; j < ignore.size(); j++)
+                            if(triangle_intersection(coord({s->x, s->y, s->z}), contact_direction, last_triangle) < friction_gap*friction_gap)
                             {
-                                // acute or perpendicular angle seam with the triangle we just hit: remove it from the ignore list
-                                if(dot(ignore[j].normal, t.normal) >= 0)
-                                    ignore.erase(ignore.begin()+(j--));
-                            }
-                            ignore.push_back(t);
-                            
-                            if(last_triangle != zero_collision)
-                            {
-                                auto contact_direction = normalize(last_triangle.normal);
-                                
-                                if(triangle_intersection(coord({s->x, s->y, s->z}), contact_direction, last_triangle) < friction_gap*friction_gap)
+                                double speed = sqrt(dot(motion, motion));
+                                if(speed != 0)
                                 {
-                                    double speed = sqrt(dot(motion, motion));
-                                    if(speed != 0)
-                                    {
-                                        double normalforce = -dot(contact_direction, coord(0, 1, 0));
-                                        if(normalforce < 0) normalforce = 0;
-                                        double half_newspeed = speed-friction*airtime*normalforce;
-                                        if(half_newspeed < 0) half_newspeed = 0;
-                                        
-                                        motion = mult(motion, half_newspeed/speed);
-                                        
-                                        s->xspeed = motion.x;
-                                        s->yspeed = motion.y;
-                                        s->zspeed = motion.z;
-                                    }
+                                    double normalforce = -dot(contact_direction, coord(0, 1, 0));
+                                    if(normalforce < 0) normalforce = 0;
+                                    double half_newspeed = speed-friction*airtime*normalforce;
+                                    if(half_newspeed < 0) half_newspeed = 0;
+                                    
+                                    motion = mult(motion, half_newspeed/speed);
+                                    
+                                    s->xspeed = motion.x;
+                                    s->yspeed = motion.y;
+                                    s->zspeed = motion.z;
                                 }
                             }
-                            
-                            s->x += airtime*s->xspeed;
-                            s->y += airtime*s->yspeed;
-                            s->z += airtime*s->zspeed;
-                            
-                            s->x += t.normal.x*safety;
-                            s->y += t.normal.y*safety;
-                            s->z += t.normal.z*safety;
-                            
-                            motion = reject(motion, t.normal);
-                            
-                            s->xspeed = motion.x;
-                            s->yspeed = motion.y;
-                            s->zspeed = motion.z;
-                            
-                            
-                            last_triangle = t;
-                            reached = true;
-                            hit_anything_at_all = true;
-                            
-                            //puts("collision");
-                            
-                            break; // breaks for, not while
                         }
+                        
+                        s->x += airtime*s->xspeed;
+                        s->y += airtime*s->yspeed;
+                        s->z += airtime*s->zspeed;
+                        
+                        s->x += t.normal.x*safety;
+                        s->y += t.normal.y*safety;
+                        s->z += t.normal.z*safety;
+                        
+                        motion = reject(motion, t.normal);
+                        
+                        s->xspeed = motion.x;
+                        s->yspeed = motion.y;
+                        s->zspeed = motion.z;
+                        
+                        last_triangle = t;
+                        reached = true;
+                        hit_anything_at_all = true;
                     }
                     if(!hit_anything_at_all)
                     {
