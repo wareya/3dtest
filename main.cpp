@@ -1124,8 +1124,8 @@ struct renderer {
                 0.0f,     0.0f,     0.0f, 1.0f
         };
         float rotation_z[16] = {
-                cos(r_z),-sin(r_z), 0.0f, 0.0f,
-                sin(r_z), cos(r_z), 0.0f, 0.0f,
+            cos(r_z),-sin(r_z),     0.0f, 0.0f,
+            sin(r_z), cos(r_z),     0.0f, 0.0f,
                 0.0f,     0.0f,     1.0f, 0.0f,
                 0.0f,     0.0f,     0.0f, 1.0f
         };
