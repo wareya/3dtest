@@ -232,11 +232,11 @@ void m4mult(float * a, float * b)
     memcpy(a, output, sizeof(float)*16);
 }
 
-bool postprocessing = false;
+bool postprocessing = true;
 
 // diagonal fov
-//double fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
-double fov = 110;
+double fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
+//double fov = 110;
 
 // fisheye projection post shader
 bool polar = true;
@@ -1711,6 +1711,7 @@ void generate_terrain()
 struct projectile {
     double x, y, z, xspeed, yspeed, zspeed, life;
     collision contact_triangle = zero_collision;
+    std::vector<collision> touching;
     bool collided = false;
 };
 
@@ -1922,7 +1923,7 @@ int main (int argc, char ** argv)
                 
                 collision & last_triangle = s->contact_triangle;
                 
-                std::vector<collision> ignore;
+                std::vector<collision> & touching = s->touching;
                 double time = delta;
                 
                 bool hit_anything_at_all = false;
@@ -1937,17 +1938,18 @@ int main (int argc, char ** argv)
                     auto motion = coord({s->xspeed, s->yspeed, s->zspeed});
                     auto speed = sqrt(dot(motion, motion))*time;
                     
+                    std::vector<collision> ignore;
+                    
                     // select closest collidable triangle
                     for(auto t : worldtriangles)
                     {
-                        // skip if it's on our ignore list
+                        // skip if we already interacted with it this frame
                         bool docontinue = false;
                         for(auto other : ignore) if (t == other) docontinue = true;
                         if(docontinue) continue;
                     
                         // no collision from behind
-                        double dottie = -dot(normalize(motion), normalize(t.normal));
-                        if(dottie < 0) continue;
+                        if(-dot(normalize(motion), normalize(t.normal)) < 0) continue;
                         
                         auto d = triangle_intersection(pos, normalize(motion), t);
                         // collide with things even if they're slightly in front of us
@@ -1975,14 +1977,24 @@ int main (int argc, char ** argv)
                         }
                         time = newtime;
                         
-                        for(unsigned int j = 0; j < ignore.size(); j++)
+                        bool already_touching = false;
+                        for(unsigned int j = 0; j < touching.size(); j++)
                         {
-                            // acute or perpendicular angle seam with the triangle we just hit: remove it from the ignore list
-                            if(dot(ignore[j].normal, t.normal) >= 0)
-                                ignore.erase(ignore.begin()+(j--));
+                            if(touching[j] == t) already_touching = true;
+                            // too similar to the one we're on now and not it, we don't care about it anymore
+                            if(dot(touching[j].normal, t.normal) > 0 && t != touching[j])
+                                touching.erase(touching.begin()+(j--));
+                            // not headed in the same direction, don't care about it anymore
+                            else if(-dot(normalize(motion), touching[j].normal) < 0)
+                                touching.erase(touching.begin()+(j--));
+                        }
+                        if(!already_touching)
+                        {
+                            touching.push_back(t);
                         }
                         ignore.push_back(t);
                         
+                        // FIXME: handle seams
                         if(last_triangle != zero_collision)
                         {
                             auto contact_direction = normalize(last_triangle.normal);
@@ -2014,7 +2026,22 @@ int main (int argc, char ** argv)
                         s->y += t.normal.y*safety;
                         s->z += t.normal.z*safety;
                         
-                        motion = reject(motion, t.normal);
+                        if(touching.size() == 1)
+                        {
+                            puts("simple rejection");
+                            motion = reject(motion, t.normal);
+                        }
+                        else if(touching.size() == 2)
+                        {
+                            puts("seam");
+                            auto seam = cross(touching[0].normal, touching[1].normal);
+                            motion = project(motion, seam);
+                        }
+                        else if(touching.size() == 3)
+                        {
+                            puts("crevice");
+                            motion = coord(); // zero-vector
+                        }
                         
                         s->xspeed = motion.x;
                         s->yspeed = motion.y;
@@ -2026,12 +2053,14 @@ int main (int argc, char ** argv)
                     }
                     if(!hit_anything_at_all)
                     {
+                        //puts("!hit anything at all");
                         last_triangle = zero_collision;
                     }
                     if(!reached)
                     {
                         if(time > 0)
                         {
+                            // FIXME: handle seams
                             if(last_triangle != zero_collision)
                             {
                                 auto contact_direction = normalize(last_triangle.normal);
@@ -2070,13 +2099,17 @@ int main (int argc, char ** argv)
                 }
                 
                 s->yspeed += gravity*delta/2;
+                
+                //printf("asdf %f\n", s->yspeed);
             }
         }
         
         myrenderer.cycle_start();
         
+        double shotsize = 8;
+        
         for(auto s : shots)
-            myrenderer.draw_box(junk, s->x, s->y, s->z, 4);
+            myrenderer.draw_box(junk, s->x, s->y, s->z, shotsize);
         for(auto b : boxes)
             myrenderer.draw_box(wood, b->x, b->y, b->z, b->size);
         
