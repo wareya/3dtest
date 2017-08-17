@@ -65,20 +65,6 @@ struct coord {
     }
 };
 
-struct collision {
-    coord a, b, c, normal;
-    bool operator==(collision o)
-    {
-        return a == o.a && b == o.b && c == o.c && normal == o.normal;
-    }
-    bool operator!=(collision o)
-    {
-        return !(*this == o);
-    }
-};
-
-collision zero_collision = collision({coord(),coord(),coord(),coord()});
-
 coord sub(coord a, coord b)
 {
     coord r;
@@ -132,6 +118,42 @@ coord cross(coord a, coord b)
     return r;
 }
 
+struct collision {
+    coord a, b, c, normal;
+    collision()
+    {
+        a = coord();
+        b = coord();
+        c = coord();
+        normal = coord();
+    }
+    collision(coord i, coord j, coord k, bool invert = false)
+    {
+        if(!invert)
+        {
+            a = i;
+            b = j;
+            c = k;
+        }
+        else
+        {
+            c = i;
+            b = j;
+            a = k;
+        }
+        normal = normalize(cross(sub(b, a), sub(c, a)));
+    }
+    bool operator==(collision o)
+    {
+        return a == o.a && b == o.b && c == o.c && normal == o.normal;
+    }
+    bool operator!=(collision o)
+    {
+        return !(*this == o);
+    }
+};
+
+collision zero_collision = collision();
 
 double triangle_intersection(coord o, coord d, collision c)
 {
@@ -1549,137 +1571,12 @@ struct renderer {
         glDrawElements(GL_TRIANGLE_STRIP, sizeof(indexes1)/sizeof(indexes1[0]), GL_UNSIGNED_SHORT, 0);
         checkerr(__LINE__);
     }
-
-    const static int terrainsize = 64;
-    const static int terrainscale = 64;
-    vertex terrain[terrainsize*terrainsize];
-    unsigned short terrainindexes[(terrainsize*2+1)*(terrainsize-1)];
-    
-    std::vector<collision> terraintriangles;
-
-    void generate_terrain()
-    {
-        int w, h, n;
-        unsigned char * data = stbi_load("heightmap.png", &w, &h, &n, 1);
-        for(int y = 0; y < terrainsize; y++)
-        {
-            for(int x = 0; x < terrainsize; x++)
-            {
-                int i = y*terrainsize + x;
-                terrain[i].x =  (x-terrainsize/2+0.5)*terrainscale;
-                terrain[i].z = -(y-terrainsize/2+0.5)*terrainscale;
-                
-                terrain[i].y = (0.5-data[i]/255.0f)*8;
-                terrain[i].y *= terrainscale;
-                
-                terrain[i].u = y/4.0;
-                terrain[i].v = x/4.0;
-            }
-        }
-        for(int y = 0; y < terrainsize; y++)
-        {
-            for(int x = 0; x < terrainsize; x++)
-            {
-                int i  = (y-0)*terrainsize + x;
-                double nx;
-                double ny;
-                if(y == 0)
-                {
-                    int iu = (y-0)*terrainsize + x;
-                    int id = (y+1)*terrainsize + x;
-                    ny = terrain[iu].y - terrain[id].y;
-                }
-                else if(y > 0 and y < terrainsize-1)
-                {
-                    int iu = (y-1)*terrainsize + x;
-                    int id = (y+1)*terrainsize + x;
-                    ny = (terrain[iu].y - terrain[id].y)/2;
-                }
-                else if(y == terrainsize-1)
-                {
-                    int iu = (y-1)*terrainsize + x;
-                    int id = (y+0)*terrainsize + x;
-                    ny = terrain[iu].y - terrain[id].y;
-                }
-                if(x == 0)
-                {
-                    int il = y*terrainsize + (x-0);
-                    int ir = y*terrainsize + (x+1);
-                    nx = terrain[ir].y - terrain[il].y;
-                }
-                else if(x > 0 and x < terrainsize-1)
-                {
-                    int il = y*terrainsize + (x-1);
-                    int ir = y*terrainsize + (x+1);
-                    nx = (terrain[ir].y - terrain[il].y)/2;
-                }
-                else if(x == terrainsize-1)
-                {
-                    int il = y*terrainsize + (x-1);
-                    int ir = y*terrainsize + (x+0);
-                    nx = terrain[ir].y - terrain[il].y;
-                }
-                double dx = sin(atan(nx/terrainscale));
-                double dy = sin(atan(ny/terrainscale));
-                double ts = dx*dx - dy*dy;
-                double dz;
-                if(ts < 1.0f)
-                    dz = sqrt(1.0f - ts); 
-                else
-                    dz = 0;
-                
-                terrain[i].nx =  dx;
-                terrain[i].ny = -dz; // negative y is up but positive image value is up
-                terrain[i].nz =  dy;
-                //printf("n: %f %f %f\n", dx, dz, dy);
-            }
-        }
-        
-        
-        // 65535
-        int i = 0;
-        for(int row = 0; row < terrainsize-1; row++)
-        {
-            for(int x = 0; x < terrainsize; x++) for(int y = 0; y < 2; y++) terrainindexes[i++] = x+(y+row)*terrainsize;
-            terrainindexes[i++] = 65535;
-        }
-        
-        for(int y = 0; y < terrainsize-1; y++)
-        {
-            for(int x = 0; x < terrainsize-1; x++)
-            {
-                auto ra = terrain[x  +(y  )*terrainsize];
-                auto rb = terrain[x  +(y+1)*terrainsize];
-                auto rc = terrain[x+1+(y  )*terrainsize];
-                auto rd = terrain[x+1+(y+1)*terrainsize];
-                auto a = coord(ra);
-                auto b = coord(rb);
-                auto c = coord(rc);
-                auto d = coord(rd);
-                auto c1 = normalize(cross(sub(b, a), sub(c, a)));
-                auto c2 = normalize(cross(sub(b, c), sub(d, c)));
-                auto t1 = collision({a, b, c, c1});
-                auto t2 = collision({c, b, d, c2});
-                terraintriangles.push_back(t1);
-                terraintriangles.push_back(t2);
-                
-                //printf("pushed %f %f %f,  %f %f %f,  %f %f %f\n", c1.a.x, c1.a.y, c1.a.z, c1.b.x, c1.b.y, c1.b.z, c1.c.x, c1.c.y, c1.c.z);
-            }
-        }
-    }
-    void draw_terrain(texture * texture, double x, double y, double z, double scale)
+    void draw_terrain(texture * texture, vertex * terrain, int terrainsize, unsigned short * terrainindexes, int terrainindexessize, double x, double y, double z, double scale)
     {
         glUseProgram(program);
         glBindVertexArray(MainVAO);
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, VIO);
-        
-        static bool init = false;
-        if(!init)
-        {
-            generate_terrain();
-            init = true;
-        }
         
         float translation[16] = {
             scale,  0.0f, 0.0f,    x,
@@ -1691,14 +1588,125 @@ struct renderer {
         glUniformMatrix4fv(glGetUniformLocation(program, "translation"), 1, 0, translation);
         glUniform1i(glGetUniformLocation(program, "boost"), texture->boost);
         glBindTexture(GL_TEXTURE_2D, texture->texid);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(terrain), terrain,  GL_DYNAMIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, terrainsize, terrain,  GL_DYNAMIC_DRAW);
         
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(terrainindexes), terrainindexes, GL_DYNAMIC_DRAW);
-        glDrawElements(GL_TRIANGLE_STRIP, sizeof(terrainindexes)/sizeof(terrainindexes[0]), GL_UNSIGNED_SHORT, 0);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, terrainindexessize, terrainindexes, GL_DYNAMIC_DRAW);
+        glDrawElements(GL_TRIANGLE_STRIP, terrainindexessize/sizeof(terrainindexes[0]), GL_UNSIGNED_SHORT, 0);
         
         checkerr(__LINE__);
     }
 };
+    
+std::vector<collision> worldtriangles;
+
+const static int terrainsize = 64; // dimensions of terrain
+const static int terrainscale = 64; // scale of each quad in terrain
+vertex terrain[terrainsize*terrainsize];
+unsigned short terrainindexes[(terrainsize*2+1)*(terrainsize-1)];
+
+void generate_terrain()
+{
+    int w, h, n;
+    unsigned char * data = stbi_load("heightmap.png", &w, &h, &n, 1);
+    for(int y = 0; y < terrainsize; y++)
+    {
+        for(int x = 0; x < terrainsize; x++)
+        {
+            int i = y*terrainsize + x;
+            terrain[i].x =  (x-terrainsize/2+0.5)*terrainscale;
+            terrain[i].z = -(y-terrainsize/2+0.5)*terrainscale;
+            
+            terrain[i].y = (0.5-data[i]/255.0f)*8;
+            terrain[i].y *= terrainscale;
+            
+            terrain[i].u = y/4.0;
+            terrain[i].v = x/4.0;
+        }
+    }
+    for(int y = 0; y < terrainsize; y++)
+    {
+        for(int x = 0; x < terrainsize; x++)
+        {
+            int i  = (y-0)*terrainsize + x;
+            double nx;
+            double ny;
+            if(y == 0)
+            {
+                int iu = (y-0)*terrainsize + x;
+                int id = (y+1)*terrainsize + x;
+                ny = terrain[iu].y - terrain[id].y;
+            }
+            else if(y > 0 and y < terrainsize-1)
+            {
+                int iu = (y-1)*terrainsize + x;
+                int id = (y+1)*terrainsize + x;
+                ny = (terrain[iu].y - terrain[id].y)/2;
+            }
+            else if(y == terrainsize-1)
+            {
+                int iu = (y-1)*terrainsize + x;
+                int id = (y+0)*terrainsize + x;
+                ny = terrain[iu].y - terrain[id].y;
+            }
+            if(x == 0)
+            {
+                int il = y*terrainsize + (x-0);
+                int ir = y*terrainsize + (x+1);
+                nx = terrain[ir].y - terrain[il].y;
+            }
+            else if(x > 0 and x < terrainsize-1)
+            {
+                int il = y*terrainsize + (x-1);
+                int ir = y*terrainsize + (x+1);
+                nx = (terrain[ir].y - terrain[il].y)/2;
+            }
+            else if(x == terrainsize-1)
+            {
+                int il = y*terrainsize + (x-1);
+                int ir = y*terrainsize + (x+0);
+                nx = terrain[ir].y - terrain[il].y;
+            }
+            double dx = sin(atan(nx/terrainscale));
+            double dy = sin(atan(ny/terrainscale));
+            double ts = dx*dx - dy*dy;
+            double dz;
+            if(ts < 1.0f)
+                dz = sqrt(1.0f - ts); 
+            else
+                dz = 0;
+            
+            terrain[i].nx =  dx;
+            terrain[i].ny = -dz; // negative y is up but positive image value is up
+            terrain[i].nz =  dy;
+            //printf("n: %f %f %f\n", dx, dz, dy);
+        }
+    }
+    
+    // 65535
+    int i = 0;
+    for(int row = 0; row < terrainsize-1; row++)
+    {
+        for(int x = 0; x < terrainsize; x++) for(int y = 0; y < 2; y++) terrainindexes[i++] = x+(y+row)*terrainsize;
+        terrainindexes[i++] = 65535;
+    }
+    
+    for(int y = 0; y < terrainsize-1; y++)
+    {
+        for(int x = 0; x < terrainsize-1; x++)
+        {
+            auto ra = terrain[x  +(y  )*terrainsize];
+            auto rb = terrain[x  +(y+1)*terrainsize];
+            auto rc = terrain[x+1+(y  )*terrainsize];
+            auto rd = terrain[x+1+(y+1)*terrainsize];
+            
+            auto t1 = collision(ra, rb, rc);
+            auto t2 = collision(rc, rb, rd);
+            
+            worldtriangles.push_back(t1);
+            worldtriangles.push_back(t2);
+        }
+    }
+}
 
 struct projectile {
     double x, y, z, xspeed, yspeed, zspeed, life;
@@ -1706,9 +1714,70 @@ struct projectile {
     bool collided = false;
 };
 
-std::vector<projectile *> shots;
+struct box {
+    double x, y, z, size;
+};
 
-vertex boxes[8];
+std::vector<projectile *> shots;
+std::vector<box *> boxes;
+
+void add_box(double x, double y, double z, double size)
+{
+    boxes.push_back(new box({x, y, z, size}));
+    
+    double s = size/2;
+    
+    // top
+    worldtriangles.push_back(collision(coord(x-s, y-s, z-s), coord(x+s, y-s, z-s), coord(x-s, y-s, z+s)));
+    worldtriangles.push_back(collision(coord(x+s, y-s, z-s), coord(x-s, y-s, z+s), coord(x+s, y-s, z+s), true));
+    // bottom
+    worldtriangles.push_back(collision(coord(x+s, y+s, z-s), coord(x-s, y+s, z-s), coord(x+s, y+s, z+s)));
+    worldtriangles.push_back(collision(coord(x-s, y+s, z-s), coord(x+s, y+s, z+s), coord(x-s, y+s, z+s), true));
+    // left
+    worldtriangles.push_back(collision(coord(x-s, y+s, z-s), coord(x-s, y-s, z-s), coord(x-s, y+s, z+s)));
+    worldtriangles.push_back(collision(coord(x-s, y-s, z-s), coord(x-s, y+s, z+s), coord(x-s, y-s, z+s), true));
+    // right
+    worldtriangles.push_back(collision(coord(x+s, y-s, z-s), coord(x+s, y+s, z-s), coord(x+s, y-s, z+s)));
+    worldtriangles.push_back(collision(coord(x+s, y+s, z-s), coord(x+s, y-s, z+s), coord(x+s, y+s, z+s), true));
+    // out-from-screen
+    worldtriangles.push_back(collision(coord(x+s, y-s, z-s), coord(x-s, y-s, z-s), coord(x+s, y+s, z-s)));
+    worldtriangles.push_back(collision(coord(x-s, y-s, z-s), coord(x+s, y+s, z-s), coord(x-s, y+s, z-s), true));
+    // into-screen
+    worldtriangles.push_back(collision(coord(x-s, y-s, z+s), coord(x+s, y-s, z+s), coord(x-s, y+s, z+s)));
+    worldtriangles.push_back(collision(coord(x+s, y-s, z+s), coord(x-s, y+s, z+s), coord(x+s, y+s, z+s), true));
+    
+    
+//     // top
+//     {-s,-s,-s, 0.0f, 0.0f, 0.0f,-1.0f, 0.0f},
+//     { s,-s,-s, 1.0f, 0.0f, 0.0f,-1.0f, 0.0f},
+//     {-s,-s, s, 0.0f, 1.0f, 0.0f,-1.0f, 0.0f},
+//     { s,-s, s, 1.0f, 1.0f, 0.0f,-1.0f, 0.0f},
+//     // bottom
+//     { s, s,-s, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+//     {-s, s,-s, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+//     { s, s, s, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f},
+//     {-s, s, s, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f},
+//     // left
+//     {-s, s,-s, 0.0f, 1.0f,-1.0f, 0.0f, 0.0f},
+//     {-s,-s,-s, 0.0f, 0.0f,-1.0f, 0.0f, 0.0f},
+//     {-s, s, s, 1.0f, 1.0f,-1.0f, 0.0f, 0.0f},
+//     {-s,-s, s, 1.0f, 0.0f,-1.0f, 0.0f, 0.0f},
+//     // right
+//     { s,-s,-s, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+//     { s, s,-s, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f},
+//     { s,-s, s, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+//     { s, s, s, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f},
+//     // front or back
+//     { s,-s,-s, 0.0f, 0.0f, 0.0f, 0.0f,-1.0f},
+//     {-s,-s,-s, 1.0f, 0.0f, 0.0f, 0.0f,-1.0f},
+//     { s, s,-s, 0.0f, 1.0f, 0.0f, 0.0f,-1.0f},
+//     {-s, s,-s, 1.0f, 1.0f, 0.0f, 0.0f,-1.0f},
+//     // opposite
+//     {-s,-s, s, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+//     { s,-s, s, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+//     {-s, s, s, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+//     { s, s, s, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+}
 
 int main (int argc, char ** argv)
 {
@@ -1723,9 +1792,16 @@ int main (int argc, char ** argv)
     if(!dirt) return 0;
     auto sky = myrenderer.load_cubemap_alt("sky.png", "skytop.png", "skybottom.png");
     if(!sky) return 0;
-    
     auto junk = myrenderer.load_texture("junk.png");
     if(!junk) return 0;
+    
+    generate_terrain();
+    
+    add_box(0, 128, 0, units_per_meter);
+    add_box(32, -96-64-128, 256-32, 128);
+    add_box(0, -96-64-128, 256-32+128, 128);
+    add_box(64, -96, 256, 256);
+    add_box(1040, -890, 0, 256);
     
     while(!glfwWindowShouldClose(win))
     {
@@ -1862,7 +1938,7 @@ int main (int argc, char ** argv)
                     auto speed = sqrt(dot(motion, motion))*time;
                     
                     // select closest collidable triangle
-                    for(auto t : myrenderer.terraintriangles)
+                    for(auto t : worldtriangles)
                     {
                         // skip if it's on our ignore list
                         bool docontinue = false;
@@ -2000,16 +2076,11 @@ int main (int argc, char ** argv)
         myrenderer.cycle_start();
         
         for(auto s : shots)
-        {
             myrenderer.draw_box(junk, s->x, s->y, s->z, 4);
-        }
+        for(auto b : boxes)
+            myrenderer.draw_box(wood, b->x, b->y, b->z, b->size);
         
-        myrenderer.draw_box(wood, 0, -128, 0, units_per_meter);
-        myrenderer.draw_box(wood, 32, -96-64-128, 256-32, 128);
-        myrenderer.draw_box(wood, 0, -96-64-128, 256-32+128, 128);
-        myrenderer.draw_box(wood, 64, -96, 256, 256);
-        myrenderer.draw_box(wood, 1040, -890, 0, 256);
-        myrenderer.draw_terrain(dirt, 0, 0, 0, 1);
+        myrenderer.draw_terrain(dirt, terrain, sizeof(terrain), terrainindexes, sizeof(terrainindexes), 0, 0, 0, 1);
         
         myrenderer.draw_cubemap(sky);
         
