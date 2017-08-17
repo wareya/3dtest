@@ -28,8 +28,8 @@ limitations under the License.
 
 #include <signal.h>
 
-#define deg2rad(X) (X/180.0f*M_PI)
-#define rad2deg(X) (X*180.0f/M_PI)
+#define deg2rad(X) ((X)/180.0f*(M_PI))
+#define rad2deg(X) ((X)*180.0f/(M_PI))
 
 #include <chrono>
 #include <thread>
@@ -120,6 +120,7 @@ coord cross(coord a, coord b)
 
 struct collision {
     coord a, b, c, normal;
+    bool isstatic = true;
     collision()
     {
         a = coord();
@@ -207,7 +208,7 @@ double z = 0;
 double height = 1.75*units_per_meter;
 
 double gravity = 9.8*units_per_meter; // units per second per second
-double friction = 7*units_per_meter; // units per second per second
+double friction = 10*units_per_meter; // units per second per second under normal gravity on a flat surface; when equal to gravity, 45 degree slopes are the breaking point of friction and gravity
 //double shock = 5*units_per_meter; // units per second per impact
 
 
@@ -1889,17 +1890,25 @@ int main (int argc, char ** argv)
                 right_waspressed = true;
                 puts("making box");
                 
-                auto newshot = new projectile;
-                newshot->x = x;
-                newshot->y = y+8;
-                newshot->z = z;
-                double shotspeed = 8*units_per_meter;
-                newshot->zspeed = shotspeed*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-                newshot->xspeed = shotspeed*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-                newshot->yspeed = shotspeed*sin(deg2rad(rotation_x));
-                newshot->life = 3;
-                
-                shots.push_back(newshot);
+                double scatter_angle = 7;
+                int scatter_size = 1;
+                for(int rx = -scatter_size; rx <= scatter_size; rx++)
+                {
+                    for(int ry = -scatter_size; ry <= scatter_size; ry++)
+                    {
+                        auto newshot = new projectile;
+                        newshot->x = x;
+                        newshot->y = y+8;
+                        newshot->z = z;
+                        double shotspeed = 8*units_per_meter;
+                        newshot->zspeed = shotspeed*cos(deg2rad(rotation_y+ry*scatter_angle))*cos(deg2rad(rotation_x+rx*scatter_angle));
+                        newshot->xspeed = shotspeed*sin(deg2rad(rotation_y+ry*scatter_angle))*cos(deg2rad(rotation_x+rx*scatter_angle));
+                        newshot->yspeed = shotspeed*sin(deg2rad(rotation_x+rx*scatter_angle));
+                        newshot->life = 8;
+                        
+                        shots.push_back(newshot);
+                    }
+                }
             }
         }
         else
@@ -1924,6 +1933,11 @@ int main (int argc, char ** argv)
                 collision & last_triangle = s->contact_triangle;
                 
                 std::vector<collision> & touching = s->touching;
+                // forget about non-static collisions that we ended last frame touching
+                for(unsigned int j = 0; j < touching.size(); j++)
+                    if(!touching[i].isstatic)
+                        touching.erase(touching.begin()+(j--));
+                
                 double time = delta;
                 
                 bool hit_anything_at_all = false;
@@ -2022,24 +2036,37 @@ int main (int argc, char ** argv)
                         s->y += airtime*s->yspeed;
                         s->z += airtime*s->zspeed;
                         
-                        s->x += t.normal.x*safety;
-                        s->y += t.normal.y*safety;
-                        s->z += t.normal.z*safety;
-                        
                         if(touching.size() == 1)
                         {
-                            puts("simple rejection");
+                            s->x += t.normal.x*safety;
+                            s->y += t.normal.y*safety;
+                            s->z += t.normal.z*safety;
+                            
+                            //puts("simple rejection");
                             motion = reject(motion, t.normal);
                         }
                         else if(touching.size() == 2)
                         {
-                            puts("seam");
+                            auto n1 = touching[0].normal;
+                            auto n2 = touching[1].normal;
+                            auto newnormal = normalize(coord(n1.x+n2.x, n1.y+n2.y, n1.z+n2.z));
+                            s->x += newnormal.x*safety;
+                            s->y += newnormal.y*safety;
+                            s->z += newnormal.z*safety;
+                            //puts("seam");
                             auto seam = cross(touching[0].normal, touching[1].normal);
                             motion = project(motion, seam);
                         }
                         else if(touching.size() == 3)
                         {
-                            puts("crevice");
+                            auto n1 = touching[0].normal;
+                            auto n2 = touching[1].normal;
+                            auto n3 = touching[2].normal;
+                            auto newnormal = normalize(coord(n1.x+n2.x+n3.x, n1.y+n2.y+n3.y, n1.z+n2.z+n3.z));
+                            s->x += newnormal.x*safety;
+                            s->y += newnormal.y*safety;
+                            s->z += newnormal.z*safety;
+                            //puts("crevice");
                             motion = coord(); // zero-vector
                         }
                         
