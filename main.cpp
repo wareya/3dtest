@@ -63,16 +63,27 @@ struct coord {
     {
         return x == o.x && y == o.y && z == o.z;
     }
+    coord operator-()
+    {
+        return coord(-x, -y, -z);
+    }
+    bool operator>(coord o)
+    {
+        return (x > o.x and y > o.y and z > o.z);
+    }
+    bool operator<(coord o)
+    {
+        return (x < o.x and y < o.y and z < o.z);
+    }
+    coord operator+(coord b)
+    {
+        return coord(x+b.x, y+b.y, z+b.z);
+    }
+    coord operator-(coord b)
+    {
+        return coord(x-b.x, y-b.y, z-b.z);
+    }
 };
-
-coord sub(coord a, coord b)
-{
-    coord r;
-    r.x = a.x-b.x;
-    r.y = a.y-b.y;
-    r.z = a.z-b.z;
-    return r;
-}
 
 coord mult(coord a, double b)
 {
@@ -106,7 +117,7 @@ coord project(coord a, coord b)
 coord reject(coord a, coord b)
 {
     if(dot(a, a) == 0) return coord();
-    return sub(a, project(a, b));
+    return a - project(a, b);
 }
 
 coord cross(coord a, coord b)
@@ -118,68 +129,313 @@ coord cross(coord a, coord b)
     return r;
 }
 
+coord make_minima(coord a, coord b)
+{
+    coord minima;
+    
+    if(a.x <= b.x) minima.x = a.x;
+    else minima.x = b.x;
+    
+    if(a.y <= b.y) minima.y = a.y;
+    else minima.y = b.y;
+    
+    if(a.z <= b.z) minima.z = a.z;
+    else minima.z = b.z;
+    
+    return minima;
+}
+
+coord make_maxima(coord a, coord b)
+{
+    return -make_minima(-a, -b);
+}
+
+coord make_minima(std::vector<coord> coords)
+{
+    coord minima;
+    
+    minima = coords[0];
+    
+    for(auto & c : coords)
+    {
+        if(c.x < minima.x) minima.x = c.x;
+        if(c.y < minima.y) minima.y = c.y;
+        if(c.z < minima.z) minima.z = c.z;
+    }
+    
+    return minima;
+}
+
+coord make_maxima(std::vector<coord> coords)
+{
+    coord maxima;
+    
+    maxima = coords[0];
+    
+    for(auto & c : coords)
+    {
+        if(c.x > maxima.x) maxima.x = c.x;
+        if(c.y > maxima.y) maxima.y = c.y;
+        if(c.z > maxima.z) maxima.z = c.z;
+    }
+    
+    return maxima;
+}
+
+bool aabb_overlap(coord minima_a, coord maxima_a, coord minima_b, coord maxima_b)
+{
+    return minima_a.x <= maxima_b.x and maxima_a.x >= minima_b.x and
+           minima_a.y <= maxima_b.y and maxima_a.y >= minima_b.y and
+           minima_a.z <= maxima_b.z and maxima_a.z >= minima_b.z;
+}
+
 struct collision {
-    coord a, b, c, normal;
+    // a flat triangle (with vertices in counter-clockwise direction when looking down at it) has a normal pointing up and acts like a floor
+    std::vector<coord> points;
+    coord normal;
+    
+    // bounding box
+    coord minima;
+    coord maxima;
+    
     bool isstatic = true;
     collision()
     {
-        a = coord();
-        b = coord();
-        c = coord();
-        normal = coord();
+        points = {coord(), coord(), coord()};
+        
+        normal = coord(0,-1,0);
+        
+        minima = make_minima(points);
+        maxima = make_maxima(points);
     }
-    collision(coord i, coord j, coord k, bool invert = false)
+    collision(coord i, coord j, coord k, bool invert = false, bool makestatic = true)
     {
-        if(!invert)
-        {
-            a = i;
-            b = j;
-            c = k;
-        }
+        if(invert)
+            points = {i, k, j};
         else
-        {
-            c = i;
-            b = j;
-            a = k;
-        }
-        normal = normalize(cross(sub(b, a), sub(c, a)));
+            points = {i, j, k};
+        // This Is Right. cross((0,0,-1),(1,0,0)) (i.e. cross(backwards, rightwards)) should produce (0,-1,0) (i.e. upwards)
+        normal = normalize(cross(points[1]-points[0], points[2]-points[0]));
+        isstatic = makestatic;
+        
+        minima = make_minima(points);
+        maxima = make_maxima(points);
+    }
+    collision(coord i, coord j, coord k, coord norm, coord minim, coord maxim, bool isstat)
+    {
+        points = {i, j, k};
+        normal = norm;
+        minima = minim;
+        maxima = maxim;
+        isstatic = isstat;
     }
     bool operator==(collision o)
     {
-        return a == o.a && b == o.b && c == o.c && normal == o.normal;
+        return points[0] == o.points[0] && points[1] == o.points[1] && points[2] == o.points[2] && normal == o.normal;
     }
     bool operator!=(collision o)
     {
         return !(*this == o);
     }
+    collision operator+(coord v)
+    {
+        return collision(points[0]+v, points[1]+v, points[2]+v, normal, minima, maxima, isstatic);
+    }
 };
 
-collision zero_collision = collision();
+struct plane {
+    coord intersect;
+    coord normal;
+    bool isstatic;
+    plane()
+    {
+        intersect = coord();
+        normal = coord();
+        isstatic = true;
+    }
+    bool operator==(plane o)
+    {
+        return intersect == o.intersect and normal == o.normal && isstatic == o.isstatic;
+    }
+    bool operator!=(plane o)
+    {
+        return !(*this == o);
+    }
+};
 
-double triangle_intersection(coord o, coord d, collision c)
+
+coord make_minima(std::vector<collision> triangles)
 {
-    coord e1 = sub(c.b, c.a);
-    coord e2 = sub(c.c, c.a);
-    // Calculate planes normal vector
+    coord minima;
+    
+    minima = triangles[0].minima;
+    
+    for(auto & t : triangles)
+        minima = make_minima(t.minima, minima);
+    
+    return minima;
+}
+
+
+coord make_maxima(std::vector<collision> triangles)
+{
+    coord maxima;
+    
+    maxima = triangles[0].maxima;
+    
+    for(auto & t : triangles)
+        maxima = -make_minima(-t.maxima, -maxima);
+    
+    return maxima;
+}
+
+double ray_cast_triangle(coord o, coord m, collision c)
+{
+    // no collision from behind (motion in same direction as normal)
+    
+    double velocity = sqrt(dot(m, m));
+    if(velocity == 0) return 0;
+    
+    coord d = mult(m, 1/velocity);
+    
+    if(dot(d, c.normal) > 0)
+        return 0;
+    
+    coord e1 = c.points[1]-c.points[0];
+    coord e2 = c.points[2]-c.points[0];
+    
     coord pvec = cross(d, e2);
     double det = dot(e1, pvec);
     
     if(det == 0)
         return 0;
-
-    coord tvec = sub(o, c.a);
+    
+    coord tvec = o-c.points[0];
     double u = dot(tvec, pvec) / det;
     if (u < 0 || u > 1)
         return 0;
-
+    
     coord qvec = cross(tvec, e1);
     double v = dot(d, qvec) / det;
     if (v < 0 || u + v > 1)
         return 0;
     
-    return dot(e2, qvec) / det;
+    double ret = dot(e2, qvec) / det;
+    
+    // too distant, not real
+    if(ret > velocity)
+        return 0;
+    
+    return ret;
 }
 
+void triangle_castlines_triangle(collision r, coord d, collision c, double & d1, plane & contact_plane)
+{
+    d1 = 0;
+    
+    if(dot(r.normal, c.normal) > 0) return;
+    
+    
+    for(int i = 0; i < 3; i++)
+    {
+        for(int j = 0; j < 3; j++)
+        {
+            coord r1 = r.points[i];
+            coord r2 = r.points[(i+1)%3];
+            coord c1 = c.points[j];
+            coord c2 = c.points[(j+1)%3];
+            
+            auto ro = r2-r1;
+            
+            auto tri1 = collision(c1, c2, c2+ro);
+            auto tri2 = collision(c1, c2+ro, c1+ro);
+            
+            if(dot(d, tri1.normal) > 0)
+                tri1 = collision(c1, c2+ro, c2);
+            if(dot(d, tri2.normal) > 0)
+                tri2 = collision(c1, c1+ro, c2+ro);
+            
+            double d2 = ray_cast_triangle(r2, d, tri1);
+            double d3 = ray_cast_triangle(r2, d, tri2);
+            
+            if(d2 > 0 and d2 < d3)
+            {
+                d1 = d2;
+                contact_plane.intersect = tri1.points[i];
+                contact_plane.normal = tri1.normal;
+                contact_plane.isstatic = c.isstatic;
+            }
+            else if(d3 > 0)
+            {
+                d1 = d3;
+                contact_plane.intersect = tri1.points[i];
+                contact_plane.normal = tri1.normal;
+                contact_plane.isstatic = c.isstatic;
+            }
+        }
+    }
+}
+
+struct rigidbody {
+    double x, y, z;
+    double xspeed, yspeed, zspeed;
+    coord minima; // AABB stuff
+    coord maxima; // AABB stuff
+    std::vector<collision> triangles; // relative to x, y, z
+    std::vector<coord> points; // relative to x, y, z
+};
+
+plane zero_plane = plane();
+
+void rigidbody_cast_triangle(rigidbody & body, coord d, collision c, double & d1, plane & contact_plane)
+{
+    auto position = coord(body.x, body.y, body.z);
+    
+    auto minima = make_minima(body.minima+position, body.minima+position+d);
+    auto maxima = make_maxima(body.maxima+position, body.maxima+position+d);
+    
+    d1 = 0;
+    
+    if(!aabb_overlap(minima, maxima, c.minima, c.maxima))
+        return;
+    
+    for(auto p : body.points)
+    {
+        double d2 = ray_cast_triangle(p+position, d, c);
+        if(d2 > 0 and (d1 == 0 or d2 < d1))
+        {
+            d1 = d2;
+            contact_plane.intersect = c.points[0];
+            contact_plane.normal = c.normal;
+            contact_plane.isstatic = c.isstatic;
+        }
+    }
+    for(auto p : c.points)
+    {
+        for(auto tri : body.triangles)
+        {
+            double d2 = ray_cast_triangle(p-position, -d, tri);
+            if(d2 > 0 and (d1 == 0 or d2 < d1))
+            {
+                d1 = d2;
+                contact_plane.intersect = c.points[0];
+                contact_plane.normal = -tri.normal;
+                contact_plane.isstatic = c.isstatic;
+            }
+        }
+    }
+    for(auto tri : body.triangles)
+    {
+        double d2;
+        plane new_plane;
+        triangle_castlines_triangle(tri+position, d, c, d2, new_plane);
+        if(d2 > 0 and (d1 == 0 or d2 < d1))
+        {
+            d1 = d2;
+            contact_plane = new_plane;
+        }
+    }
+}
 
 void checkerr(int line)
 {
@@ -561,7 +817,7 @@ struct renderer {
     {
         if(postprocessing) viewportscale = viewPortRes;
         else viewportscale = 1.0f;
-        glfwSwapInterval(0);
+        glfwSwapInterval(1);
         
         if(!glfwInit()) puts("glfw failed to init"), exit(0);
         
@@ -1615,7 +1871,7 @@ void generate_terrain()
         {
             int i = y*terrainsize + x;
             terrain[i].x =  (x-terrainsize/2+0.5)*terrainscale;
-            terrain[i].z = -(y-terrainsize/2+0.5)*terrainscale;
+            terrain[i].z = -(y-terrainsize/2+0.5)*terrainscale; // z is forward when looking slightly down
             
             terrain[i].y = (0.5-data[i]/255.0f)*8;
             terrain[i].y *= terrainscale;
@@ -1710,9 +1966,10 @@ void generate_terrain()
 }
 
 struct projectile {
-    double x, y, z, xspeed, yspeed, zspeed, life;
-    collision contact_triangle = zero_collision;
-    std::vector<collision> touching;
+    double life;
+    rigidbody body;
+    plane contact_plane = zero_plane;
+    std::vector<plane> touching;
     bool collided = false;
 };
 
@@ -1723,63 +1980,48 @@ struct box {
 std::vector<projectile *> shots;
 std::vector<box *> boxes;
 
+void insert_box_collisions(double x, double y, double z, double s, std::vector<collision> & triangles, bool makestatic)
+{
+    // top
+    triangles.push_back(collision(coord(x-s, y-s, z-s), coord(x+s, y-s, z-s), coord(x-s, y-s, z+s), false, makestatic));
+    triangles.push_back(collision(coord(x+s, y-s, z-s), coord(x-s, y-s, z+s), coord(x+s, y-s, z+s), true,  makestatic));
+    // bottom
+    triangles.push_back(collision(coord(x+s, y+s, z-s), coord(x-s, y+s, z-s), coord(x+s, y+s, z+s), false, makestatic));
+    triangles.push_back(collision(coord(x-s, y+s, z-s), coord(x+s, y+s, z+s), coord(x-s, y+s, z+s), true,  makestatic));
+    // left
+    triangles.push_back(collision(coord(x-s, y+s, z-s), coord(x-s, y-s, z-s), coord(x-s, y+s, z+s), false, makestatic));
+    triangles.push_back(collision(coord(x-s, y-s, z-s), coord(x-s, y+s, z+s), coord(x-s, y-s, z+s), true,  makestatic));
+    // right
+    triangles.push_back(collision(coord(x+s, y-s, z-s), coord(x+s, y+s, z-s), coord(x+s, y-s, z+s), false, makestatic));
+    triangles.push_back(collision(coord(x+s, y+s, z-s), coord(x+s, y-s, z+s), coord(x+s, y+s, z+s), true,  makestatic));
+    // out-from-screen
+    triangles.push_back(collision(coord(x+s, y-s, z-s), coord(x-s, y-s, z-s), coord(x+s, y+s, z-s), false, makestatic));
+    triangles.push_back(collision(coord(x-s, y-s, z-s), coord(x+s, y+s, z-s), coord(x-s, y+s, z-s), true,  makestatic));
+    // into-screen
+    triangles.push_back(collision(coord(x-s, y-s, z+s), coord(x+s, y-s, z+s), coord(x-s, y+s, z+s), false, makestatic));
+    triangles.push_back(collision(coord(x+s, y-s, z+s), coord(x-s, y+s, z+s), coord(x+s, y+s, z+s), true,  makestatic));
+}
+
+void insert_box_points(double x, double y, double z, double s, std::vector<coord> & points, bool makestatic)
+{
+    points.push_back(coord(x-s, y-s, z-s));
+    points.push_back(coord(x+s, y-s, z-s));
+    points.push_back(coord(x-s, y-s, z+s));
+    points.push_back(coord(x+s, y-s, z+s));
+    points.push_back(coord(x-s, y+s, z-s));
+    points.push_back(coord(x+s, y+s, z-s));
+    points.push_back(coord(x-s, y+s, z+s));
+    points.push_back(coord(x+s, y+s, z+s));
+}
+
 void add_box(double x, double y, double z, double size)
 {
     boxes.push_back(new box({x, y, z, size}));
     
-    double s = size/2;
-    
-    // top
-    worldtriangles.push_back(collision(coord(x-s, y-s, z-s), coord(x+s, y-s, z-s), coord(x-s, y-s, z+s)));
-    worldtriangles.push_back(collision(coord(x+s, y-s, z-s), coord(x-s, y-s, z+s), coord(x+s, y-s, z+s), true));
-    // bottom
-    worldtriangles.push_back(collision(coord(x+s, y+s, z-s), coord(x-s, y+s, z-s), coord(x+s, y+s, z+s)));
-    worldtriangles.push_back(collision(coord(x-s, y+s, z-s), coord(x+s, y+s, z+s), coord(x-s, y+s, z+s), true));
-    // left
-    worldtriangles.push_back(collision(coord(x-s, y+s, z-s), coord(x-s, y-s, z-s), coord(x-s, y+s, z+s)));
-    worldtriangles.push_back(collision(coord(x-s, y-s, z-s), coord(x-s, y+s, z+s), coord(x-s, y-s, z+s), true));
-    // right
-    worldtriangles.push_back(collision(coord(x+s, y-s, z-s), coord(x+s, y+s, z-s), coord(x+s, y-s, z+s)));
-    worldtriangles.push_back(collision(coord(x+s, y+s, z-s), coord(x+s, y-s, z+s), coord(x+s, y+s, z+s), true));
-    // out-from-screen
-    worldtriangles.push_back(collision(coord(x+s, y-s, z-s), coord(x-s, y-s, z-s), coord(x+s, y+s, z-s)));
-    worldtriangles.push_back(collision(coord(x-s, y-s, z-s), coord(x+s, y+s, z-s), coord(x-s, y+s, z-s), true));
-    // into-screen
-    worldtriangles.push_back(collision(coord(x-s, y-s, z+s), coord(x+s, y-s, z+s), coord(x-s, y+s, z+s)));
-    worldtriangles.push_back(collision(coord(x+s, y-s, z+s), coord(x-s, y+s, z+s), coord(x+s, y+s, z+s), true));
-    
-    
-//     // top
-//     {-s,-s,-s, 0.0f, 0.0f, 0.0f,-1.0f, 0.0f},
-//     { s,-s,-s, 1.0f, 0.0f, 0.0f,-1.0f, 0.0f},
-//     {-s,-s, s, 0.0f, 1.0f, 0.0f,-1.0f, 0.0f},
-//     { s,-s, s, 1.0f, 1.0f, 0.0f,-1.0f, 0.0f},
-//     // bottom
-//     { s, s,-s, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
-//     {-s, s,-s, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
-//     { s, s, s, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f},
-//     {-s, s, s, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f},
-//     // left
-//     {-s, s,-s, 0.0f, 1.0f,-1.0f, 0.0f, 0.0f},
-//     {-s,-s,-s, 0.0f, 0.0f,-1.0f, 0.0f, 0.0f},
-//     {-s, s, s, 1.0f, 1.0f,-1.0f, 0.0f, 0.0f},
-//     {-s,-s, s, 1.0f, 0.0f,-1.0f, 0.0f, 0.0f},
-//     // right
-//     { s,-s,-s, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
-//     { s, s,-s, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f},
-//     { s,-s, s, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f},
-//     { s, s, s, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f},
-//     // front or back
-//     { s,-s,-s, 0.0f, 0.0f, 0.0f, 0.0f,-1.0f},
-//     {-s,-s,-s, 1.0f, 0.0f, 0.0f, 0.0f,-1.0f},
-//     { s, s,-s, 0.0f, 1.0f, 0.0f, 0.0f,-1.0f},
-//     {-s, s,-s, 1.0f, 1.0f, 0.0f, 0.0f,-1.0f},
-//     // opposite
-//     {-s,-s, s, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-//     { s,-s, s, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-//     {-s, s, s, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
-//     { s, s, s, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+    insert_box_collisions(x, y, z, size/2, worldtriangles, true);
 }
+
+double shotsize = 32;
 
 int main (int argc, char ** argv)
 {
@@ -1825,8 +2067,8 @@ int main (int argc, char ** argv)
         else
         {
             starttime = glfwGetTime();
-            delta = starttime-oldtime;
-            //delta = throttle;
+            //delta = starttime-oldtime;
+            delta = throttle;
             oldtime = starttime;
         }
         
@@ -1891,20 +2133,26 @@ int main (int argc, char ** argv)
                 puts("making box");
                 
                 double scatter_angle = 7;
-                int scatter_size = 1;
+                int scatter_size = 0;
                 for(int rx = -scatter_size; rx <= scatter_size; rx++)
                 {
                     for(int ry = -scatter_size; ry <= scatter_size; ry++)
                     {
                         auto newshot = new projectile;
-                        newshot->x = x;
-                        newshot->y = y+8;
-                        newshot->z = z;
+                        newshot->body.x = x;
+                        newshot->body.y = y+8;
+                        newshot->body.z = z;
                         double shotspeed = 8*units_per_meter;
-                        newshot->zspeed = shotspeed*cos(deg2rad(rotation_y+ry*scatter_angle))*cos(deg2rad(rotation_x+rx*scatter_angle));
-                        newshot->xspeed = shotspeed*sin(deg2rad(rotation_y+ry*scatter_angle))*cos(deg2rad(rotation_x+rx*scatter_angle));
-                        newshot->yspeed = shotspeed*sin(deg2rad(rotation_x+rx*scatter_angle));
+                        newshot->body.zspeed = shotspeed*cos(deg2rad(rotation_y+ry*scatter_angle))*cos(deg2rad(rotation_x+rx*scatter_angle));
+                        newshot->body.xspeed = shotspeed*sin(deg2rad(rotation_y+ry*scatter_angle))*cos(deg2rad(rotation_x+rx*scatter_angle));
+                        newshot->body.yspeed = shotspeed*sin(deg2rad(rotation_x+rx*scatter_angle));
                         newshot->life = 8;
+    
+                        insert_box_collisions(0, 0, 0, shotsize/2, newshot->body.triangles, false);
+                        insert_box_points(0, 0, 0, shotsize/2, newshot->body.points, false);
+                        
+                        newshot->body.minima = make_minima(newshot->body.points);
+                        newshot->body.maxima = make_maxima(newshot->body.points);
                         
                         shots.push_back(newshot);
                     }
@@ -1923,19 +2171,23 @@ int main (int argc, char ** argv)
             s->life -= delta;
             if(s->life <= 0)
             {
+                puts("natural death");
                 delete s;
                 shots.erase(shots.begin()+(i--));
+                continue;
             }
             else
             {
-                s->yspeed += gravity*delta/2;
+                rigidbody & b = s->body;
                 
-                collision & last_triangle = s->contact_triangle;
+                b.yspeed += gravity*delta/2;
                 
-                std::vector<collision> & touching = s->touching;
+                plane & last_plane = s->contact_plane;
+                
+                std::vector<plane> & touching = s->touching;
                 // forget about non-static collisions that we ended last frame touching
                 for(unsigned int j = 0; j < touching.size(); j++)
-                    if(!touching[i].isstatic)
+                    if(!touching[j].isstatic)
                         touching.erase(touching.begin()+(j--));
                 
                 double time = delta;
@@ -1945,43 +2197,36 @@ int main (int argc, char ** argv)
                 {
                     bool reached = false;
                     
-                    collision goodtriangle = zero_collision;
-                    double gooddistance = 0;
-                    
-                    auto pos = coord({s->x, s->y, s->z});
-                    auto motion = coord({s->xspeed, s->yspeed, s->zspeed});
+                    auto motion = coord({b.xspeed, b.yspeed, b.zspeed});
                     auto speed = sqrt(dot(motion, motion))*time;
                     
-                    std::vector<collision> ignore;
+                    if(speed == 0)
+                    {
+                        time = 0;
+                        continue;
+                    }
+                    
+                    plane goodplane = zero_plane;
+                    double gooddistance = 0;
                     
                     // select closest collidable triangle
-                    for(auto t : worldtriangles)
+                    for(auto p : worldtriangles)
                     {
-                        // skip if we already interacted with it this frame
-                        bool docontinue = false;
-                        for(auto other : ignore) if (t == other) docontinue = true;
-                        if(docontinue) continue;
-                    
-                        // no collision from behind
-                        if(-dot(normalize(motion), normalize(t.normal)) < 0) continue;
+                        plane contact_plane = zero_plane;
+                        double dist;
+                        rigidbody_cast_triangle(b, mult(motion, time), p, dist, contact_plane);
                         
-                        auto d = triangle_intersection(pos, normalize(motion), t);
-                        // collide with things even if they're slightly in front of us
-                        if(d <= speed and d > 0 and speed != 0) // speed != 0 is actually implicit based on the first two
+                        if(dist > 0 and (gooddistance == 0 or dist < gooddistance))
                         {
-                            if(gooddistance == 0 || d < gooddistance)
-                            {
-                                goodtriangle = t;
-                                gooddistance = d;
-                            }
+                            goodplane = contact_plane;
+                            gooddistance = dist;
                         }
                     }
                     if(gooddistance > 0)
                     {
-                        auto t = goodtriangle;
-                        auto d = gooddistance;
+                        auto p = goodplane;
                         
-                        double airtime = d/speed*time;
+                        double airtime = gooddistance/speed*time;
                         
                         double newtime = time - airtime;
                         if(newtime >= time)
@@ -1994,9 +2239,9 @@ int main (int argc, char ** argv)
                         bool already_touching = false;
                         for(unsigned int j = 0; j < touching.size(); j++)
                         {
-                            if(touching[j] == t) already_touching = true;
+                            if(touching[j] == p) already_touching = true;
                             // too similar to the one we're on now and not it, we don't care about it anymore
-                            if(dot(touching[j].normal, t.normal) > 0 && t != touching[j])
+                            if(dot(touching[j].normal, p.normal) > 0 && p != touching[j])
                                 touching.erase(touching.begin()+(j--));
                             // not headed in the same direction, don't care about it anymore
                             else if(-dot(normalize(motion), touching[j].normal) < 0)
@@ -2004,16 +2249,15 @@ int main (int argc, char ** argv)
                         }
                         if(!already_touching)
                         {
-                            touching.push_back(t);
+                            touching.push_back(p);
                         }
-                        ignore.push_back(t);
                         
                         // FIXME: handle seams
-                        if(last_triangle != zero_collision)
+                        if(last_plane != zero_plane)
                         {
-                            auto contact_direction = normalize(last_triangle.normal);
+                            auto contact_direction = normalize(last_plane.normal);
                             
-                            if(triangle_intersection(coord({s->x, s->y, s->z}), contact_direction, last_triangle) < friction_gap*friction_gap)
+                            //if(false)//rigidbody_cast_triangle(b, contact_direction, last_triangle) < friction_gap*friction_gap)
                             {
                                 double speed = sqrt(dot(motion, motion));
                                 if(speed != 0)
@@ -2025,34 +2269,34 @@ int main (int argc, char ** argv)
                                     
                                     motion = mult(motion, half_newspeed/speed);
                                     
-                                    s->xspeed = motion.x;
-                                    s->yspeed = motion.y;
-                                    s->zspeed = motion.z;
+                                    b.xspeed = motion.x;
+                                    b.yspeed = motion.y;
+                                    b.zspeed = motion.z;
                                 }
                             }
                         }
                         
-                        s->x += airtime*s->xspeed;
-                        s->y += airtime*s->yspeed;
-                        s->z += airtime*s->zspeed;
+                        b.x += airtime*b.xspeed;
+                        b.y += airtime*b.yspeed;
+                        b.z += airtime*b.zspeed;
                         
                         if(touching.size() == 1)
                         {
-                            s->x += t.normal.x*safety;
-                            s->y += t.normal.y*safety;
-                            s->z += t.normal.z*safety;
+                            b.x += p.normal.x*safety;
+                            b.y += p.normal.y*safety;
+                            b.z += p.normal.z*safety;
                             
                             //puts("simple rejection");
-                            motion = reject(motion, t.normal);
+                            motion = reject(motion, p.normal);
                         }
                         else if(touching.size() == 2)
                         {
                             auto n1 = touching[0].normal;
                             auto n2 = touching[1].normal;
                             auto newnormal = normalize(coord(n1.x+n2.x, n1.y+n2.y, n1.z+n2.z));
-                            s->x += newnormal.x*safety;
-                            s->y += newnormal.y*safety;
-                            s->z += newnormal.z*safety;
+                            b.x += newnormal.x*safety;
+                            b.y += newnormal.y*safety;
+                            b.z += newnormal.z*safety;
                             //puts("seam");
                             auto seam = cross(touching[0].normal, touching[1].normal);
                             motion = project(motion, seam);
@@ -2063,37 +2307,37 @@ int main (int argc, char ** argv)
                             auto n2 = touching[1].normal;
                             auto n3 = touching[2].normal;
                             auto newnormal = normalize(coord(n1.x+n2.x+n3.x, n1.y+n2.y+n3.y, n1.z+n2.z+n3.z));
-                            s->x += newnormal.x*safety;
-                            s->y += newnormal.y*safety;
-                            s->z += newnormal.z*safety;
+                            b.x += newnormal.x*safety;
+                            b.y += newnormal.y*safety;
+                            b.z += newnormal.z*safety;
                             //puts("crevice");
                             motion = coord(); // zero-vector
                         }
                         
-                        s->xspeed = motion.x;
-                        s->yspeed = motion.y;
-                        s->zspeed = motion.z;
+                        b.xspeed = motion.x;
+                        b.yspeed = motion.y;
+                        b.zspeed = motion.z;
                         
-                        last_triangle = t;
+                        last_plane = p;
                         reached = true;
                         hit_anything_at_all = true;
                     }
                     if(!hit_anything_at_all)
                     {
                         //puts("!hit anything at all");
-                        last_triangle = zero_collision;
+                        last_plane = zero_plane;
                     }
                     if(!reached)
                     {
                         if(time > 0)
                         {
                             // FIXME: handle seams
-                            if(last_triangle != zero_collision)
+                            if(last_plane != zero_plane)
                             {
-                                auto contact_direction = normalize(last_triangle.normal);
-                                auto motion = coord({s->xspeed, s->yspeed, s->zspeed});
+                                auto contact_direction = normalize(last_plane.normal);
+                                auto motion = coord({b.xspeed, b.yspeed, b.zspeed});
                                 
-                                if(triangle_intersection(coord({s->x, s->y, s->z}), contact_direction, last_triangle) < friction_gap*friction_gap)
+                                //if(false)//rigidbody_cast_triangle(b, contact_direction, last_plane) < friction_gap*friction_gap)
                                 {
                                     double speed = sqrt(dot(motion, motion));
                                     if(speed != 0)
@@ -2105,13 +2349,13 @@ int main (int argc, char ** argv)
                                         
                                         motion = mult(motion, newspeed/speed);
                                         
-                                        s->xspeed = motion.x;
-                                        s->yspeed = motion.y;
-                                        s->zspeed = motion.z;
+                                        b.xspeed = motion.x;
+                                        b.yspeed = motion.y;
+                                        b.zspeed = motion.z;
                                     }
                                 }
-                                else
-                                    last_triangle = zero_collision;
+                                //else
+                                //    last_plane = zero_plane;
                             }
                         }
                         break; // no collisions this iteration
@@ -2120,12 +2364,12 @@ int main (int argc, char ** argv)
                 
                 if(time > 0)
                 {
-                    s->z += time*s->zspeed;
-                    s->x += time*s->xspeed;
-                    s->y += time*s->yspeed;
+                    b.z += time*b.zspeed;
+                    b.x += time*b.xspeed;
+                    b.y += time*b.yspeed;
                 }
                 
-                s->yspeed += gravity*delta/2;
+                b.yspeed += gravity*delta/2;
                 
                 //printf("asdf %f\n", s->yspeed);
             }
@@ -2133,10 +2377,8 @@ int main (int argc, char ** argv)
         
         myrenderer.cycle_start();
         
-        double shotsize = 8;
-        
         for(auto s : shots)
-            myrenderer.draw_box(junk, s->x, s->y, s->z, shotsize);
+            myrenderer.draw_box(junk, s->body.x, s->body.y, s->body.z, shotsize);
         for(auto b : boxes)
             myrenderer.draw_box(wood, b->x, b->y, b->z, b->size);
         
