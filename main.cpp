@@ -924,6 +924,8 @@ struct renderer {
         
         if(gl3wInit()) puts("gl3w failed to init"), exit(0);
         
+        printf("OpenGL %s, GLSL %s\n", glGetString(GL_VERSION), glGetString(GL_SHADING_LANGUAGE_VERSION));
+        
         //glfwSwapBuffers(win);
         glfwGetFramebufferSize(win, &w, &h);
         
@@ -1003,6 +1005,8 @@ struct renderer {
         uniform float gamma;\n\
         varying vec2 myTexCoord;\n\
         varying vec3 myNormal;\n\
+        \n\
+        layout(location = 0) out vec4 fragColor;\n\
         void main()\n\
         {\n\
             vec4 color = texture2D(mytexture, myTexCoord, 0);\n\
@@ -1011,8 +1015,8 @@ struct renderer {
             color.rgb = pow(color.rgb, vec3(gamma));\n\
             vec3 diffuse = color.rgb * dot;\n\
             vec3 ambient = color.rgb * 0.1;\n\
-            gl_FragColor = vec4(pow(diffuse+ambient, vec3(1/gamma)), 1);\n\
-            if(boost == 1) gl_FragColor.rgb *= 4;\n\
+            fragColor = vec4(pow(diffuse+ambient, vec3(1/gamma)), 1);\n\
+            if(boost == 1) fragColor.rgb *= 4;\n\
         }\n");
         
         glUseProgram(program);
@@ -1035,10 +1039,12 @@ struct renderer {
         uniform samplerCube skybox;\n\
         uniform int cylindrical;\n\
         varying vec3 myTexCoord;\n\
+        \n\
+        layout(location = 0) out vec4 fragColor;\n\
         void main()\n\
         {\n\
             if(true)//cylindrical != 1)\n\
-                gl_FragColor = texture(skybox, myTexCoord);\n\
+                fragColor = texture(skybox, myTexCoord);\n\
             else\n\
             {\n\
                 vec3 coord = myTexCoord;\n\
@@ -1049,7 +1055,7 @@ struct renderer {
                 coord.z = sin(angle)*dist;\n\
                 //coord.y = sqrt(1 - coord.x*coord.x + coord.z*coord.z);\n\
                 //coord = normalize(coord);\n\
-                gl_FragColor = texture(skybox, coord);\n\
+                fragColor = texture(skybox, coord);\n\
             }\n\
         }\n");
         
@@ -1099,6 +1105,8 @@ struct renderer {
             vec2 coord;\n\
             ivec2 mySize;\n\
             float scale;\n\
+            \n\
+            layout(location = 0) out vec4 fragColor;\n\
             vec2 offsetRoundedCoord(int a, int b)\n\
             {\n\
                 return vec2((floor(coord.x*(mySize.x)-0.5)+a+0.5)/(mySize.x),\n\
@@ -1200,13 +1208,13 @@ struct renderer {
                 coord = myTexCoord;\n\
                 if(scale < 1)\n\
                 {\n\
-                    gl_FragColor = supersamplegrid();\n\
+                    fragColor = supersamplegrid();\n\
                 }\n\
                 else\n\
                 {\n\
                     vec2 phase = interpolationPhase();\n\
                     vec4 c = hermitegrid(phase.x, phase.y);\n\
-                    gl_FragColor = c;\n\
+                    fragColor = c;\n\
                 }\n\
             }\n");
             
@@ -1231,9 +1239,11 @@ struct renderer {
             "#version 330 core\n\
             uniform sampler2D mytexture;\n\
             varying vec2 myTexCoord;\n\
+            \n\
+            layout(location = 0) out vec4 fragColor;\n\
             void main()\n\
             {\n\
-                gl_FragColor = texture2D(mytexture, myTexCoord);\n\
+                fragColor = texture2D(mytexture, myTexCoord);\n\
             }\n");
             
             glUseProgram(copy->program);
@@ -1246,6 +1256,8 @@ struct renderer {
             uniform sampler2D mytexture;\n\
             varying vec2 myTexCoord;\n\
             uniform float amount;\n\
+            \n\
+            layout(location = 0) out vec4 fragColor;\n\
             vec2 offsetCoord(int x, int y, vec2 size)\n\
             {\n\
                 return vec2((myTexCoord.x*size.x+x)/(size.x),\n\
@@ -1270,7 +1282,7 @@ struct renderer {
                     }\n\
                 }\n\
                 blurred /= weight;\n\
-                gl_FragColor = texture2D(mytexture, myTexCoord)*(1+amount) - blurred*amount;\n\
+                fragColor = texture2D(mytexture, myTexCoord)*(1+amount) - blurred*amount;\n\
             }\n");
             
             glUseProgram(sharpen->program);
@@ -1286,6 +1298,8 @@ struct renderer {
             uniform float fov; // half the diagonal fov in radians\n\
             varying vec2 myTexCoord;\n\
             #define M_PI 3.1415926435\n\
+            \n\
+            layout(location = 0) out vec4 fragColor;\n\
             void main()\n\
             {\n\
                 vec2 aspect_v = normalize(vec2(aspect, 1));\n\
@@ -1296,7 +1310,7 @@ struct renderer {
                 // convert from polar angle to planar distance\n\
                 float dist = tan(pole*fov)/tan(fov);\n\
                 vec2 newcoord = badcoord/pole*dist/aspect_v/2 + vec2(0.5, 0.5);\n\
-                gl_FragColor = texture2D(mytexture, newcoord);\n\
+                fragColor = texture2D(mytexture, newcoord);\n\
             }\n");
             
             glUseProgram(distort->program);
@@ -1310,11 +1324,13 @@ struct renderer {
             "#version 330 core\n\
             uniform sampler2D mytexture;\n\
             varying vec2 myTexCoord;\n\
+            \n\
+            layout(location = 0) out vec4 fragColor;\n\
             void main()\n\
             {\n\
                 vec4 c1 = texture2D(mytexture, myTexCoord);\n\
                 vec4 c2 = texture2D(mytexture, myTexCoord*0.9+0.05);\n\
-                gl_FragColor = c1*0.8+c2*0.2;\n\
+                fragColor = c1*0.8+c2*0.2;\n\
             }\n");
             
             glUseProgram(meme->program);
@@ -1328,6 +1344,8 @@ struct renderer {
             uniform int radius;\n\
             uniform float gamma;\n\
             varying vec2 myTexCoord;\n\
+            \n\
+            layout(location = 0) out vec4 fragColor;\n\
             void main()\n\
             {\n\
                 int diameter = radius*2+1;\n\
@@ -1341,7 +1359,7 @@ struct renderer {
                     color += pow(texture2D(mytexture, myTexCoord+vec2(float(i)/size.x, 0)), vec4(gamma))*weight;\n\
                 }\n\
                 color /= gather;\n\
-                gl_FragColor = pow(color, vec4(1/gamma));\n\
+                fragColor = pow(color, vec4(1/gamma));\n\
             }\n");
             
             glUseProgram(bloom1->program);
@@ -1357,6 +1375,8 @@ struct renderer {
             uniform int radius;\n\
             uniform float gamma;\n\
             varying vec2 myTexCoord;\n\
+            \n\
+            layout(location = 0) out vec4 fragColor;\n\
             void main()\n\
             {\n\
                 int diameter = radius*2+1;\n\
@@ -1370,7 +1390,7 @@ struct renderer {
                     color += pow(texture2D(mytexture, myTexCoord+vec2(0, float(i)/size.y)), vec4(gamma))*weight;\n\
                 }\n\
                 color /= gather;\n\
-                gl_FragColor = pow(color, vec4(1/gamma));\n\
+                fragColor = pow(color, vec4(1/gamma));\n\
             }\n");
             
             glUseProgram(bloom2->program);
@@ -1387,12 +1407,14 @@ struct renderer {
             uniform float ratio;\n\
             uniform float gamma;\n\
             varying vec2 myTexCoord;\n\
+            \n\
+            layout(location = 0) out vec4 fragColor;\n\
             void main()\n\
             {\n\
                 vec4 color1 = pow(texture2D(drybuffer, myTexCoord), vec4(gamma));\n\
                 vec4 color2 = pow(texture2D(wetbuffer, myTexCoord), vec4(gamma));\n\
                 vec4 color = pow(color1*ratio + color2*(1-ratio), vec4(1/gamma));\n\
-                gl_FragColor = color;\n\
+                fragColor = color;\n\
             }\n");
             
             glUseProgram(bloom3->program);
