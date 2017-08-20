@@ -557,7 +557,6 @@ double rotation_z = 0;
 double units_per_meter = 64;
 
 double gravity = 9.8*units_per_meter; // units per second per second
-double friction = 10*units_per_meter; // units per second per second under normal gravity on a flat surface; when equal to gravity, 45 degree slopes are the breaking point of friction and gravity
 //double shock = 5*units_per_meter; // units per second per impact
 
 
@@ -2237,7 +2236,7 @@ void body_find_contact(rigidbody & b, std::vector<collision> & world, coord moti
     }
 }
 
-void collider_throw(collider & c, std::vector<collision> & world, double delta)
+void collider_throw(collider & c, std::vector<collision> & world, double delta, double friction)
 {
             
     rigidbody & b = c.body;
@@ -2592,10 +2591,52 @@ int main (int argc, char ** argv)
         }
         
         glfwPollEvents();
+        static bool focused = false;
         
-        static double sensitivity = 1/8.0f;
-        static bool continuation = false;
+        static bool holding_m1 = false;
         if(glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS)
+        {
+            if(!holding_m1)
+            {
+                glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                focused = true;
+            }
+            holding_m1 = true;
+        }
+        else
+        {
+            if(holding_m1)
+            {
+                glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                focused = false;
+            }
+            holding_m1 = false;
+        }
+        
+        static bool holding_z = false;
+        if(glfwGetKey(win, GLFW_KEY_Z))
+        {
+            if(!holding_z)
+            {
+                if(focused)
+                {
+                    glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                    focused = false;
+                }
+                else
+                {
+                    glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    focused = true;
+                }
+            }
+            holding_z = true;
+        }
+        else
+            holding_z = false;
+        
+        static double sensitivity = 1/16.0f;
+        static bool continuation = false;
+        if(focused)
         {
             double xpos, ypos;
             glfwGetCursorPos(win, &xpos, &ypos);
@@ -2612,13 +2653,14 @@ int main (int argc, char ** argv)
                 if(rotation_x >  90) rotation_x =  90;
                 if(rotation_x < -90) rotation_x = -90;
             }
+            
             last_xpos = xpos;
             last_ypos = ypos;
+            
             continuation = true;
         }
         else
             continuation = false;
-        
         
         coord walking;
         
@@ -2626,13 +2668,13 @@ int main (int argc, char ** argv)
         {
             walking.z += delta*cos(deg2rad(rotation_y));//*cos(deg2rad(rotation_x));
             walking.x += delta*sin(deg2rad(rotation_y));//*cos(deg2rad(rotation_x));
-            walking.y += delta*sin(deg2rad(rotation_x));
+            //walking.y += delta*sin(deg2rad(rotation_x));
         }
         if(glfwGetKey(win, GLFW_KEY_D))
         {
             walking.z -= delta*cos(deg2rad(rotation_y));//*cos(deg2rad(rotation_x));
             walking.x -= delta*sin(deg2rad(rotation_y));//*cos(deg2rad(rotation_x));
-            walking.y -= delta*sin(deg2rad(rotation_x));
+            //walking.y -= delta*sin(deg2rad(rotation_x));
         }
         
         if(glfwGetKey(win, GLFW_KEY_W))
@@ -2668,70 +2710,85 @@ int main (int argc, char ** argv)
         
         bool onfloor = false;
         
-        if(walking != coord())
+        if(floor != zero_collision and !jumped)
         {
-            if(floor != zero_collision and !jumped)
-            {
-                auto contact = -normalized_dot(coord(0,1,0), floor.normal);
-                
-                if(contact > sqrt(0.5))
-                    onfloor = true;
-            }
-            walking = normalize(walking);
-            double decay = pow(0.01, delta);
+            auto contact = -normalized_dot(coord(0,1,0), floor.normal);
+            
+            if(contact > sqrt(0.5))
+                onfloor = true;
+        }
+        if(walking == coord())
+        {
             if(onfloor)
             {
-                double accel = 100*units_per_meter;
-                //myself.body.xspeed = myself.body.xspeed*decay + walkspeed*walking.x*(1-decay);
-                //myself.body.zspeed = myself.body.zspeed*decay + walkspeed*walking.z*(1-decay);
-                myself.body.xspeed = myself.body.xspeed + accel*walking.x*delta;
-                myself.body.zspeed = myself.body.zspeed + accel*walking.z*delta;
-                //double speed = magnitude(coord(myself.body.xspeed, 0, myself.body.zspeed));
-                auto startvector = coord(myself.body.xspeed, 0, myself.body.zspeed);
-                double dottie = dot(normalize(startvector), walking);
-                double current_relative_speed = magnitude(startvector)*dottie;
-                if(current_relative_speed > walkspeed)
+                double friction = 40*units_per_meter;
+                double speed = sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed);
+                if(speed > 0)
                 {
-                    double factor = walkspeed/current_relative_speed;
-                    myself.body.xspeed *= factor;
-                    myself.body.zspeed *= factor;
+                    puts("frictioning");
+                    double newspeed = speed - friction*delta;
+                    if(newspeed < 0) newspeed = 0;
+                    myself.body.xspeed *= newspeed/speed;
+                    myself.body.zspeed *= newspeed/speed;
+                    myself.body.yspeed *= newspeed/speed;
+                }
+            }
+        }
+        if(walking != coord())
+        {
+            walking = normalize(walking);
+            if(onfloor)
+            {
+                // reduces "iceskating" (turns being wider than they should be while holding forward)
+                double drag = pow(0.1, delta);
+                myself.body.xspeed *= drag;
+                myself.body.zspeed *= drag;
+                
+                double accel = 100*units_per_meter;
+                auto startvector = coord(myself.body.xspeed, 0, myself.body.zspeed);
+                double current_relative_speed;
+                if(startvector != coord())
+                {
+                    double dottie = dot(normalize(startvector), walking);
+                    current_relative_speed = magnitude(startvector)*dottie;
+                }
+                else
+                    current_relative_speed = 0;
+                if(current_relative_speed < walkspeed)
+                {
+                    double addition = accel*delta;
+                    if(addition > walkspeed-current_relative_speed) addition = walkspeed-current_relative_speed;
+                    myself.body.xspeed = myself.body.xspeed + walking.x*addition;
+                    myself.body.zspeed = myself.body.zspeed + walking.z*addition;
                 }
             }
             else
             {
                 double accel = 40*units_per_meter;
                 auto startvector = coord(myself.body.xspeed, 0, myself.body.zspeed);
-                double dottie = dot(normalize(startvector), walking);
-                double current_relative_speed = magnitude(startvector)*dottie;
+                double current_relative_speed;
+                if(startvector != coord())
+                {
+                    double dottie = dot(normalize(startvector), walking);
+                    current_relative_speed = magnitude(startvector)*dottie;
+                }
+                else
+                    current_relative_speed = 0;
                 if(current_relative_speed < 30)
                 {
-                    myself.body.xspeed = myself.body.xspeed + accel*walking.x*delta;
-                    myself.body.zspeed = myself.body.zspeed + accel*walking.z*delta;
-                    /*
-                    startvector = coord(myself.body.xspeed, 0, myself.body.zspeed);
-                    dottie = dot(normalize(startvector), walking);
-                    
-                    current_relative_speed = magnitude(startvector)*dottie;
-                    if(current_relative_speed > 30)
-                    {
-                        double factor = 30/current_relative_speed;
-                        //if(current_relative_speed < 0) factor *= -1;
-                        myself.body.xspeed *= factor;
-                        myself.body.zspeed *= factor;
-                    }
-                    */
+                    double addition = accel*delta;
+                    if(addition > 30-current_relative_speed) addition = 30-current_relative_speed;
+                    myself.body.xspeed = myself.body.xspeed + walking.x*addition;
+                    myself.body.zspeed = myself.body.zspeed + walking.z*addition;
                 }
-                //myself.body.xspeed = myself.body.xspeed*decay;
-                //myself.body.yspeed = 0;
-                //myself.body.zspeed = myself.body.zspeed*decay;
             }
         }
-        //printf("speed %f %f\n", myself.body.xspeed, myself.body.zspeed);
+        //printf("speed %f\n", sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed)/units_per_meter);
         
         if(!onfloor)
             myself.body.yspeed += gravity*delta/2;
         
-        collider_throw(myself, worldtriangles, delta);
+        collider_throw(myself, worldtriangles, delta, 0);
         
         collision newfloor = zero_collision;
         
@@ -2819,7 +2876,7 @@ int main (int argc, char ** argv)
             {
                 s->c.body.yspeed += gravity*delta/2;
                 
-                collider_throw(s->c, worldtriangles, delta);
+                collider_throw(s->c, worldtriangles, delta, 10*units_per_meter);
                 
                 s->c.body.yspeed += gravity*delta/2;
             }
