@@ -402,7 +402,8 @@ void triangle_castlines_triangle(collision r, coord d, collision c, double & d1,
 {
     d1 = INF;
     
-    if(normalized_dot(d, c.normal) > 0 and normalized_dot(d, r.normal) < 0) return;
+    if(normalized_dot(d, c.normal) > 0 or normalized_dot(d, r.normal) < 0) return;
+    if(normalized_dot(r.normal, c.normal) > 0) return;
     
     for(int i = 0; i < 3; i++)
     {
@@ -2247,7 +2248,7 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta)
     
     std::vector<collision> & touching = c.touching;
     
-    //touching = {};
+    touching = {};
     
     double time = delta;
     
@@ -2307,6 +2308,38 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta)
                     }
                 }
             }
+            
+            if(touching.size() >= 3)
+            {
+                puts("aslgjaeruogjadfhlaetrhAERFGIKERGAERHGAEUIRTH===========");
+                exit(0);
+                // FIXME: huge hack with no care about correctness
+                //puts("aslgjaeruogjadfhlaetrhAERFGIKERGAERHGAEUIRTH===========");
+                //exit(0);
+                double biggest_dot = -1;
+                collision similar_collision = zero_collision;
+                for(auto t : touching)
+                {
+                    if(dot(t.normal, p.normal) > biggest_dot)
+                    {
+                        biggest_dot = dot(t.normal, p.normal);
+                        similar_collision = t;
+                    }
+                }
+                for(unsigned int j = 0; j < touching.size(); j++)
+                {
+                    if(touching[j] == similar_collision)
+                        touching.erase(touching.begin()+(j--));
+                }
+            }
+            if(touching.size() >= 3)
+            {
+                puts("aslgjaeruogjadfhlaetrhAERFGIKERGAERHGAEUIRTH===========");
+                exit(0);
+            }
+            
+            
+            
             touching.push_back(p);
             
             // FIXME: handle seams
@@ -2336,12 +2369,6 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta)
             b.x += airtime*b.xspeed;
             b.y += airtime*b.yspeed;
             b.z += airtime*b.zspeed;
-            
-            if(touching.size() > 3)
-            {
-                puts("aslgjaeruogjadfhlaetrhAERFGIKERGAERHGAEUIRTH===========");
-                return;
-            }
             
             if(touching.size() == 1)
             {
@@ -2394,6 +2421,7 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta)
                 {
                     if(debughard) puts("B");
                     motion = coord();
+                    break;
                 }
                 else if(dot_a <= 0)
                 {
