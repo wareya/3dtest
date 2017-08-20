@@ -2541,7 +2541,9 @@ int main (int argc, char ** argv)
     
     generate_terrain();
     
-    add_box(128, -256-8, 96+128, units_per_meter);
+    add_box(2048, 1024+256-8, 0, 2048);
+    
+    add_box(128, -256, 96+128, units_per_meter);
     add_box(0, -128, 96, units_per_meter);
     add_box(0, -128+64, 96, units_per_meter);
     add_box(64, -128+64, 96, units_per_meter);
@@ -2664,31 +2666,75 @@ int main (int argc, char ** argv)
             jumped = true;
         }
         
-        double decay = 0;//pow(0.01, delta);
+        bool onfloor = false;
+        
         if(walking != coord())
         {
+            if(floor != zero_collision and !jumped)
+            {
+                auto contact = -normalized_dot(coord(0,1,0), floor.normal);
+                
+                if(contact > sqrt(0.5))
+                    onfloor = true;
+            }
             walking = normalize(walking);
-            
-            walking = walking*-normalized_dot(coord(0,1,0), floor.normal); // traction
-            
-            
-            myself.body.xspeed = myself.body.xspeed*decay + walkspeed*walking.x*(1-decay);
-            //myself.body.yspeed = walkspeed*walking.y;
-            myself.body.zspeed = myself.body.zspeed*decay + walkspeed*walking.z*(1-decay);
-        }
-        else if(floor != zero_collision)
-        {
-            //myself.body.xspeed = myself.body.xspeed*decay;
-            //myself.body.yspeed = 0;
-            //myself.body.zspeed = myself.body.zspeed*decay;
+            double decay = pow(0.01, delta);
+            if(onfloor)
+            {
+                double accel = 100*units_per_meter;
+                //myself.body.xspeed = myself.body.xspeed*decay + walkspeed*walking.x*(1-decay);
+                //myself.body.zspeed = myself.body.zspeed*decay + walkspeed*walking.z*(1-decay);
+                myself.body.xspeed = myself.body.xspeed + accel*walking.x*delta;
+                myself.body.zspeed = myself.body.zspeed + accel*walking.z*delta;
+                //double speed = magnitude(coord(myself.body.xspeed, 0, myself.body.zspeed));
+                auto startvector = coord(myself.body.xspeed, 0, myself.body.zspeed);
+                double dottie = dot(normalize(startvector), walking);
+                double current_relative_speed = magnitude(startvector)*dottie;
+                if(current_relative_speed > walkspeed)
+                {
+                    double factor = walkspeed/current_relative_speed;
+                    myself.body.xspeed *= factor;
+                    myself.body.zspeed *= factor;
+                }
+            }
+            else
+            {
+                double accel = 40*units_per_meter;
+                auto startvector = coord(myself.body.xspeed, 0, myself.body.zspeed);
+                double dottie = dot(normalize(startvector), walking);
+                double current_relative_speed = magnitude(startvector)*dottie;
+                if(current_relative_speed < 30)
+                {
+                    myself.body.xspeed = myself.body.xspeed + accel*walking.x*delta;
+                    myself.body.zspeed = myself.body.zspeed + accel*walking.z*delta;
+                    /*
+                    startvector = coord(myself.body.xspeed, 0, myself.body.zspeed);
+                    dottie = dot(normalize(startvector), walking);
+                    
+                    current_relative_speed = magnitude(startvector)*dottie;
+                    if(current_relative_speed > 30)
+                    {
+                        double factor = 30/current_relative_speed;
+                        //if(current_relative_speed < 0) factor *= -1;
+                        myself.body.xspeed *= factor;
+                        myself.body.zspeed *= factor;
+                    }
+                    */
+                }
+                //myself.body.xspeed = myself.body.xspeed*decay;
+                //myself.body.yspeed = 0;
+                //myself.body.zspeed = myself.body.zspeed*decay;
+            }
         }
         //printf("speed %f %f\n", myself.body.xspeed, myself.body.zspeed);
         
-        myself.body.yspeed += gravity*delta/2;
+        if(!onfloor)
+            myself.body.yspeed += gravity*delta/2;
         
         collider_throw(myself, worldtriangles, delta);
         
         collision newfloor = zero_collision;
+        
         double newdistance = INF;
         body_find_contact(myself.body, worldtriangles, coord(0,16,0), 16, newfloor, newdistance);
         
@@ -2712,7 +2758,8 @@ int main (int argc, char ** argv)
             }
         }
         
-        myself.body.yspeed += gravity*delta/2;
+        if(!onfloor)
+            myself.body.yspeed += gravity*delta/2;
         
         x = myself.body.x;
         y = myself.body.y;
