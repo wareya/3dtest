@@ -406,7 +406,8 @@ void triangle_castlines_triangle(collision r, coord d, collision c, double & d1,
     d1 = INF;
     
     if(normalized_dot(d, c.normal) > 0 or normalized_dot(d, r.normal) < 0) return;
-    if(normalized_dot(r.normal, c.normal) > 0) return;
+    //if(normalized_dot(r.normal, c.normal) >= 0) return;
+    //if(normalized_dot(d, r.normal) < 0 ) return;
     
     for(int i = 0; i < 3; i++)
     {
@@ -1843,8 +1844,10 @@ struct renderer {
         glFinish();
         checkerr(__LINE__);
     }
-    void draw_box(texture * texture, double x, double y, double z, double scale)
+    void draw_box(texture * texture, double x, double y, double z, double scale, double yangle = 0)
     {
+        yangle *= M_PI/180.0;
+        
         glUseProgram(program);
         glBindVertexArray(MainVAO);
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
@@ -1899,6 +1902,15 @@ struct renderer {
              0.0f,  0.0f, scale,   z,
              0.0f,  0.0f, 0.0f, 1.0f
         };
+        
+        float rotation_y[16] = {
+            cos(yangle),  0.0f, sin(yangle), 0.0f,
+                0.0f,     1.0f,        0.0f, 0.0f,
+           -sin(yangle),  0.0f, cos(yangle), 0.0f,
+                0.0f,     0.0f,        0.0f, 1.0f
+        };
+        
+        m4mult(translation, rotation_y);
         
         glUniformMatrix4fv(glGetUniformLocation(program, "translation"), 1, 0, translation);
         glUniform1i(glGetUniformLocation(program, "boost"), texture->boost);
@@ -2091,44 +2103,48 @@ struct projectile {
 };
 
 struct box {
-    double x, y, z, size;
+    double x, y, z, size, yangle;
 };
 
 std::vector<projectile *> shots;
 std::vector<box *> boxes;
 
-void insert_box_collisions(double x, double y, double z, double s, std::vector<collision> & triangles, bool makestatic)
+void insert_box_collisions(double x, double y, double z, double s, std::vector<collision> & triangles, bool makestatic, double yangle = 0)
 {
+    double xunit = 1;//sin(yangle)*s;
+    double zunit = 1;//cos(yangle)*s;
     // top
-    triangles.push_back(collision(coord(x-s, y-s, z-s), coord(x+s, y-s, z-s), coord(x-s, y-s, z+s), false, makestatic));
-    triangles.push_back(collision(coord(x+s, y-s, z-s), coord(x-s, y-s, z+s), coord(x+s, y-s, z+s), true,  makestatic));
+    triangles.push_back(collision(coord(x-xunit, y-s, z-zunit), coord(x+xunit, y-s, z-zunit), coord(x-xunit, y-s, z+zunit), false, makestatic));
+    triangles.push_back(collision(coord(x+xunit, y-s, z-zunit), coord(x-xunit, y-s, z+zunit), coord(x+xunit, y-s, z+zunit), true,  makestatic));
     // bottom
-    triangles.push_back(collision(coord(x+s, y+s, z-s), coord(x-s, y+s, z-s), coord(x+s, y+s, z+s), false, makestatic));
-    triangles.push_back(collision(coord(x-s, y+s, z-s), coord(x+s, y+s, z+s), coord(x-s, y+s, z+s), true,  makestatic));
+    triangles.push_back(collision(coord(x+xunit, y+s, z-zunit), coord(x-xunit, y+s, z-zunit), coord(x+xunit, y+s, z+zunit), false, makestatic));
+    triangles.push_back(collision(coord(x-xunit, y+s, z-zunit), coord(x+xunit, y+s, z+zunit), coord(x-xunit, y+s, z+zunit), true,  makestatic));
     // left
-    triangles.push_back(collision(coord(x-s, y+s, z-s), coord(x-s, y-s, z-s), coord(x-s, y+s, z+s), false, makestatic));
-    triangles.push_back(collision(coord(x-s, y-s, z-s), coord(x-s, y+s, z+s), coord(x-s, y-s, z+s), true,  makestatic));
+    triangles.push_back(collision(coord(x-xunit, y+s, z-zunit), coord(x-xunit, y-s, z-zunit), coord(x-xunit, y+s, z+zunit), false, makestatic));
+    triangles.push_back(collision(coord(x-xunit, y-s, z-zunit), coord(x-xunit, y+s, z+zunit), coord(x-xunit, y-s, z+zunit), true,  makestatic));
     // right
-    triangles.push_back(collision(coord(x+s, y-s, z-s), coord(x+s, y+s, z-s), coord(x+s, y-s, z+s), false, makestatic));
-    triangles.push_back(collision(coord(x+s, y+s, z-s), coord(x+s, y-s, z+s), coord(x+s, y+s, z+s), true,  makestatic));
+    triangles.push_back(collision(coord(x+xunit, y-s, z-zunit), coord(x+xunit, y+s, z-zunit), coord(x+xunit, y-s, z+zunit), false, makestatic));
+    triangles.push_back(collision(coord(x+xunit, y+s, z-zunit), coord(x+xunit, y-s, z+zunit), coord(x+xunit, y+s, z+zunit), true,  makestatic));
     // out-from-screen
-    triangles.push_back(collision(coord(x+s, y-s, z-s), coord(x-s, y-s, z-s), coord(x+s, y+s, z-s), false, makestatic));
-    triangles.push_back(collision(coord(x-s, y-s, z-s), coord(x+s, y+s, z-s), coord(x-s, y+s, z-s), true,  makestatic));
+    triangles.push_back(collision(coord(x+xunit, y-s, z-zunit), coord(x-xunit, y-s, z-zunit), coord(x+xunit, y+s, z-zunit), false, makestatic));
+    triangles.push_back(collision(coord(x-xunit, y-s, z-zunit), coord(x+xunit, y+s, z-zunit), coord(x-xunit, y+s, z-zunit), true,  makestatic));
     // into-screen
-    triangles.push_back(collision(coord(x-s, y-s, z+s), coord(x+s, y-s, z+s), coord(x-s, y+s, z+s), false, makestatic));
-    triangles.push_back(collision(coord(x+s, y-s, z+s), coord(x-s, y+s, z+s), coord(x+s, y+s, z+s), true,  makestatic));
+    triangles.push_back(collision(coord(x-xunit, y-s, z+zunit), coord(x+xunit, y-s, z+zunit), coord(x-xunit, y+s, z+zunit), false, makestatic));
+    triangles.push_back(collision(coord(x+xunit, y-s, z+zunit), coord(x-xunit, y+s, z+zunit), coord(x+xunit, y+s, z+zunit), true,  makestatic));
 }
 
-void insert_box_points(double x, double y, double z, double s, std::vector<coord> & points, bool makestatic)
+void insert_box_points(double x, double y, double z, double s, std::vector<coord> & points, bool makestatic, double yangle = 0)
 {
-    points.push_back(coord(x-s, y-s, z-s));
-    points.push_back(coord(x+s, y-s, z-s));
-    points.push_back(coord(x-s, y-s, z+s));
-    points.push_back(coord(x+s, y-s, z+s));
-    points.push_back(coord(x-s, y+s, z-s));
-    points.push_back(coord(x+s, y+s, z-s));
-    points.push_back(coord(x-s, y+s, z+s));
-    points.push_back(coord(x+s, y+s, z+s));
+    double xunit = 1;//sin(yangle)*s;
+    double zunit = 1;//cos(yangle)*s;
+    points.push_back(coord(x-xunit, y-s, z-zunit));
+    points.push_back(coord(x+xunit, y-s, z-zunit));
+    points.push_back(coord(x-xunit, y-s, z+zunit));
+    points.push_back(coord(x+xunit, y-s, z+zunit));
+    points.push_back(coord(x-xunit, y+s, z-zunit));
+    points.push_back(coord(x+xunit, y+s, z-zunit));
+    points.push_back(coord(x-xunit, y+s, z+zunit));
+    points.push_back(coord(x+xunit, y+s, z+zunit));
 }
 
 void insert_prism_oct_body(double x, double y, double z, double radius, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic)
@@ -2158,14 +2174,14 @@ void insert_prism_oct_body(double x, double y, double z, double radius, double t
         
 }
 
-void insert_box_body(double x, double y, double z, double diameter, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic)
+void insert_box_body(double x, double y, double z, double diameter, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic, double yangle = 0)
 {
     double radius = diameter*sqrt(2);
     coord mypoints[8];
     int n = 0;
     for(int i = 0; i < 4; i++)
     {
-        double r = (i+0.5)*90/180*M_PI;
+        double r = ((i+0.5)*90+yangle)/180*M_PI;
         double forwards = cos(r)*radius;
         double rightwards = sin(r)*radius;
         printf("%f %f\n", forwards, rightwards);
@@ -2186,12 +2202,12 @@ void insert_box_body(double x, double y, double z, double diameter, double top, 
         
 }
 
-void add_box(double x, double y, double z, double size)
+void add_box(double x, double y, double z, double size, double yangle = 0)
 {
-    boxes.push_back(new box({x, y, z, size}));
+    boxes.push_back(new box({x, y, z, size, yangle}));
     
     std::vector<coord> dump;
-    insert_box_body(x, y, z, size/2, -size/2, size/2, worldtriangles, dump, true);
+    insert_box_body(x, y, z, size/2, -size/2, size/2, worldtriangles, dump, true, yangle);
     //insert_box_collisions(x, y, z, size/2, worldtriangles, true);
 }
 
@@ -2220,14 +2236,14 @@ void body_find_contact(rigidbody & b, std::vector<collision> & world, coord moti
         collision contact_collision = zero_collision;
         double dist;
         
-        rigidbody_cast_triangle(b, position, motion, p, dist, contact_collision, -safety, speed, true);
+        rigidbody_cast_triangle(b, position, motion, p, dist, contact_collision, 0, speed, true);
         if(contact_collision != zero_collision)
         {
             double dottie = -normalized_dot(motion, contact_collision.normal);
             if(dottie < 0)
                 continue;
             
-            double pseudo_safety = safety*2;///dottie;
+            double pseudo_safety = safety;///dottie;
             
             if(pseudo_safety > 10) printf("huge safety %f\n", pseudo_safety);
             
@@ -2304,7 +2320,7 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta, 
                     collision contact_collision = zero_collision;
                     double dist;
                     if(debughard) puts("erasure test");
-                    rigidbody_cast_triangle(b, coord(b.x, b.y, b.z), -touching[j].normal, touching[j], dist, contact_collision, -safety*4, safety*4);
+                    rigidbody_cast_triangle(b, coord(b.x, b.y, b.z), -touching[j].normal, touching[j], dist, contact_collision, -safety*3, safety*3);
                     //rigidbody_cast_triangle(b, , -touching[j].normal, touching[j], dist, contact_collision);
                     if(dist == INF)
                     {
@@ -2354,7 +2370,7 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta, 
             b.z += airtime*b.zspeed;
             
             
-            double fudge_space = 0;//.00002;
+            double fudge_space = 0;//.02;
             
             if(touching.size() == 1)
             {
@@ -2528,15 +2544,37 @@ int main (int argc, char ** argv)
     
     generate_terrain();
     
-    add_box(2048, 1024+256-8, 0, 2048);
+    add_box(0, 1024+256-8, 2048, 2048);
     
     add_box(128, -256, 96+128, units_per_meter);
+    
     add_box(0, -128, 96, units_per_meter);
     add_box(0, -128+64, 96, units_per_meter);
     add_box(64, -128+64, 96, units_per_meter);
+    
+    add_box(32, -96-64-128-64-32, 256-32, units_per_meter, 5);
     add_box(32, -96-64-128, 256-32, 128);
     add_box(0, -96-64-128, 256-32+128, 128);
     add_box(64, -96, 256, 256);
+    
+    
+    // second stack
+    add_box(128+256, -96, 256, 256, 20);
+    add_box(128+256, -96-256, 256, 256, 10);
+    
+    // on top of the second stack
+    add_box(256+128, -256*2, 128, units_per_meter, 45);
+    double throwaway_scale = 1.0;
+    double throwaway_scale2 = 12;
+    add_box(256+128+units_per_meter*1*throwaway_scale, -256*2-units_per_meter*1, 128, units_per_meter, 45+1*throwaway_scale2);
+    add_box(256+128+units_per_meter*2*throwaway_scale, -256*2-units_per_meter*2, 128, units_per_meter, 45+2*throwaway_scale2);
+    add_box(256+128+units_per_meter*3*throwaway_scale, -256*2-units_per_meter*3, 128, units_per_meter, 45+3*throwaway_scale2);
+    add_box(256+128+units_per_meter*4*throwaway_scale, -256*2-units_per_meter*4, 128, units_per_meter, 45+4*throwaway_scale2);
+    add_box(256+128+units_per_meter*5*throwaway_scale, -256*2-units_per_meter*5, 128, units_per_meter, 45+5*throwaway_scale2);
+    add_box(256+128+units_per_meter*6*throwaway_scale, -256*2-units_per_meter*6, 128, units_per_meter, 45+6*throwaway_scale2);
+    add_box(256+128+units_per_meter*7*throwaway_scale, -256*2-units_per_meter*7, 128, units_per_meter, 45+7*throwaway_scale2);
+    
+    // far off
     add_box(1040, -890, 0, 256);
     
     myself.body.x = x;
@@ -2549,7 +2587,7 @@ int main (int argc, char ** argv)
     //myself.body.maxima = coord(0, height-offset, 0);
     
     //void insert_prism_oct_body(double x, double y, double z, double radius, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic)
-    insert_prism_oct_body(0, 0, 0, 0.5*units_per_meter, 0, height, myself.body.triangles, myself.body.points, false);
+    insert_prism_oct_body(0, -offset, 0, 0.5*units_per_meter, 0, height, myself.body.triangles, myself.body.points, false);
     //insert_prism_oct_body(0, 0, 0, 32, 0, 32, myself.body.triangles, myself.body.points, false);
     myself.body.minima = make_minima(myself.body.points);
     myself.body.maxima = make_maxima(myself.body.points);
@@ -2703,7 +2741,7 @@ int main (int argc, char ** argv)
         {
             auto contact = -normalized_dot(coord(0,1,0), floor.normal);
             
-            if(contact > sqrt(0.5))
+            if(contact > 0.7) // ~45.57 degrees not exactly 45
                 onfloor = true;
         }
         if(walking == coord())
@@ -2786,8 +2824,8 @@ int main (int argc, char ** argv)
         
         if(floor != zero_collision and (newdistance > 1 or newfloor == zero_collision) and !jumped)
         {
-            //puts("azerty");
-            if(newdistance < 16 and -normalized_dot(coord(0,1,0), floor.normal) > sqrt(0.5))
+            // stick to floor
+            if(newdistance < 16 and -normalized_dot(coord(0,1,0), floor.normal) > 0.7) // ~45.57 degrees not exactly 45
             {
                 //puts("asdf");
                 coord velocity = coord(myself.body.xspeed, myself.body.yspeed, myself.body.zspeed);
@@ -2797,6 +2835,7 @@ int main (int argc, char ** argv)
                 myself.body.zspeed = velocity.z;
                 myself.body.y += newdistance;
             }
+            // run off ledge
             else
             {
                 //puts("wasdrghd");
@@ -2876,7 +2915,7 @@ int main (int argc, char ** argv)
         for(auto s : shots)
             myrenderer.draw_box(junk, s->c.body.x, s->c.body.y, s->c.body.z, shotsize);
         for(auto b : boxes)
-            myrenderer.draw_box(wood, b->x, b->y, b->z, b->size);
+            myrenderer.draw_box(wood, b->x, b->y, b->z, b->size, b->yangle);
         
         myrenderer.draw_terrain(dirt, terrain, sizeof(terrain), terrainindexes, sizeof(terrainindexes), 0, 0, 0, 1);
         
