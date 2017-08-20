@@ -915,6 +915,8 @@ struct renderer {
         
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        
         win = glfwCreateWindow(1280, 720, "Hello, World!", NULL, NULL);
         
         if(!win) puts("glfw failed to init"), exit(0);
