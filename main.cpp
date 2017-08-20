@@ -42,7 +42,8 @@ bool debughard = false;
 #include <thread>
 #include <vector>
 
-#define min(X,Y) (((X)>(Y))?(X):(Y))
+#define min(X,Y) (((X)<(Y))?(X):(Y))
+#define max(X,Y) (((X)>(Y))?(X):(Y))
 
 struct vertex {
     float x, y, z, u, v, nx, ny, nz;
@@ -2247,7 +2248,7 @@ void body_find_contact(rigidbody & b, std::vector<collision> & world, coord moti
             
             if(pseudo_safety > 10) printf("huge safety %f\n", pseudo_safety);
             
-            dist -= pseudo_safety;
+            dist -= pseudo_safety; // This can us to eject into other geometry in very artificial situations. Make sure all your bodies are larger than safety*2 in every dimensino.
             if(dist < gooddistance and dist < speed)
             {
                 goodcollision = contact_collision;
@@ -2545,6 +2546,8 @@ int main (int argc, char ** argv)
     generate_terrain();
     
     add_box(0, 1024+256-8, 2048, 2048);
+    add_box(0, 1024+256-8-2048, 2048+2048, 2048);
+    
     
     add_box(128, -256, 96+128, units_per_meter);
     
@@ -2574,7 +2577,7 @@ int main (int argc, char ** argv)
     add_box(256+128+units_per_meter*6*throwaway_scale, -256*2-units_per_meter*6, 128, units_per_meter, 45+6*throwaway_scale2);
     add_box(256+128+units_per_meter*7*throwaway_scale, -256*2-units_per_meter*7, 128, units_per_meter, 45+7*throwaway_scale2);
     
-    // far off
+    // far right
     add_box(1040, -890, 0, 256);
     
     myself.body.x = x;
@@ -2714,12 +2717,8 @@ int main (int argc, char ** argv)
             walking.z -= delta*sin(deg2rad(rotation_y));
             walking.x += delta*cos(deg2rad(rotation_y));
         }
-        if(glfwGetKey(win, GLFW_KEY_A))
-        {
-            walking.z /= 2;
-            walking.x /= 2;
-        }
         
+        bool slowwalk = glfwGetKey(win, GLFW_KEY_A);
         
         collision floor = zero_collision;
         double distance = INF;
@@ -2766,27 +2765,43 @@ int main (int argc, char ** argv)
             walking = normalize(walking);
             if(onfloor)
             {
-                // reduces "iceskating" (turns being wider than they should be while holding forward)
-                double drag = pow(0.0001, delta);
+                double mywalkspeed = walkspeed;
+                if(slowwalk)
+                {
+                    mywalkspeed = mywalkspeed*0.5;
+                    walking = walking*0.5;
+                }
+                // doing this instead of friction reduces "iceskating" (turns being wider than they should be while holding forward)
+                double drag = pow(0.1, delta);
                 myself.body.xspeed *= drag;
                 myself.body.zspeed *= drag;
                 
                 double accel = 100*units_per_meter;
                 auto startvector = coord(myself.body.xspeed, 0, myself.body.zspeed);
+                double startspeed = magnitude(startvector);
                 double current_relative_speed;
-                if(startvector != coord())
-                {
-                    double dottie = dot(normalize(startvector), walking);
-                    current_relative_speed = magnitude(startvector)*dottie;
-                }
+                double dottie = dot(normalize(startvector), walking);
+                if(startspeed)
+                    current_relative_speed = startspeed*dottie;
                 else
                     current_relative_speed = 0;
-                if(current_relative_speed < walkspeed)
+                if(current_relative_speed < mywalkspeed)
                 {
                     double addition = accel*delta;
-                    if(addition > walkspeed-current_relative_speed) addition = walkspeed-current_relative_speed;
-                    myself.body.xspeed = myself.body.xspeed + walking.x*addition;
-                    myself.body.zspeed = myself.body.zspeed + walking.z*addition;
+                    if(addition > mywalkspeed-current_relative_speed) addition = mywalkspeed-current_relative_speed;
+                    myself.body.xspeed += walking.x*addition;
+                    myself.body.zspeed += walking.z*addition;
+                    
+                    double endspeed = sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed);
+                    if(endspeed > mywalkspeed)
+                    {
+                        double speedlimit = max(startspeed, mywalkspeed);
+                        double factor = speedlimit/endspeed;
+                        
+                        myself.body.xspeed *= factor;
+                        myself.body.zspeed *= factor;
+                        
+                    }
                 }
             }
             else
@@ -2810,7 +2825,6 @@ int main (int argc, char ** argv)
                 }
             }
         }
-        //if(debughard) printf("speed %f\n", sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed)/units_per_meter);
         
         if(!onfloor)
             myself.body.yspeed += gravity*delta/2;
@@ -2845,6 +2859,8 @@ int main (int argc, char ** argv)
         
         if(!onfloor)
             myself.body.yspeed += gravity*delta/2;
+        
+        printf("speed %f\n", sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed)/units_per_meter);
         
         x = myself.body.x;
         y = myself.body.y;
