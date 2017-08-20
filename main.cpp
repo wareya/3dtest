@@ -2700,7 +2700,7 @@ int main (int argc, char ** argv)
         static collision lastfloor = floor;
         bool jumped = false;
         double jumpspeed = -5*units_per_meter;
-        double walkspeed = 8*units_per_meter;//4*units_per_meter;
+        double walkspeed = 6.5*units_per_meter;//4*units_per_meter;
         
         if(glfwGetKey(win, GLFW_KEY_SPACE) and floor != zero_collision)
         {
@@ -2725,7 +2725,7 @@ int main (int argc, char ** argv)
                 double speed = sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed);
                 if(speed > 0)
                 {
-                    puts("frictioning");
+                    //puts("frictioning");
                     double newspeed = speed - friction*delta;
                     if(newspeed < 0) newspeed = 0;
                     myself.body.xspeed *= newspeed/speed;
@@ -2740,7 +2740,8 @@ int main (int argc, char ** argv)
             if(onfloor)
             {
                 // reduces "iceskating" (turns being wider than they should be while holding forward)
-                double drag = pow(0.1, delta);
+                double drag = pow(0.0001, delta);
+                printf("drag %f\n", drag);
                 myself.body.xspeed *= drag;
                 myself.body.zspeed *= drag;
                 
@@ -2783,7 +2784,7 @@ int main (int argc, char ** argv)
                 }
             }
         }
-        //printf("speed %f\n", sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed)/units_per_meter);
+        printf("speed %f\n", sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed)/units_per_meter);
         
         if(!onfloor)
             myself.body.yspeed += gravity*delta/2;
