@@ -2358,15 +2358,15 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta, 
             
             if(touching.size() == 1)
             {
-                if(debughard) puts("hit");
-                if(debughard) printf("distance %0.8f\n", gooddistance);
-                if(debughard) printf("early  (%0.8f, %0.8f, %0.8f)\n", motion.x, motion.y, motion.z);
-                auto dot1 = dot(motion, p.normal);
+                //if(debughard) puts("hit");
+                //if(debughard) printf("distance %0.8f\n", gooddistance);
+                //if(debughard) printf("early  (%0.8f, %0.8f, %0.8f)\n", motion.x, motion.y, motion.z);
+                //auto dot1 = dot(motion, p.normal);
                 motion = reject(motion, p.normal);
-                if(debughard) printf("normal (%0.8f, %0.8f, %0.8f)\n", p.normal.x, p.normal.y, p.normal.z);
-                if(debughard) printf("late   (%0.8f, %0.8f, %0.8f)\n", motion.x, motion.y, motion.z);
-                auto dot2 = dot(motion, p.normal);
-                if(debughard) printf("dots %0.8f %0.8f\n", dot1, dot2);
+                //if(debughard) printf("normal (%0.8f, %0.8f, %0.8f)\n", p.normal.x, p.normal.y, p.normal.z);
+                //if(debughard) printf("late   (%0.8f, %0.8f, %0.8f)\n", motion.x, motion.y, motion.z);
+                //auto dot2 = dot(motion, p.normal);
+                //if(debughard) printf("dots %0.8f %0.8f\n", dot1, dot2);
             }
             else if(touching.size() == 2)
             {
@@ -2408,7 +2408,7 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta, 
                     if(debughard) puts("B");
                     //touching = {previous_b, current};
                     motion = coord();
-                    break;
+                    //break;
                 }
                 else if(dot_a <= fudge_space)
                 {
@@ -2730,7 +2730,6 @@ int main (int argc, char ** argv)
             {
                 // reduces "iceskating" (turns being wider than they should be while holding forward)
                 double drag = pow(0.0001, delta);
-                if(debughard) printf("drag %f\n", drag);
                 myself.body.xspeed *= drag;
                 myself.body.zspeed *= drag;
                 
@@ -2773,7 +2772,7 @@ int main (int argc, char ** argv)
                 }
             }
         }
-        if(debughard) printf("speed %f\n", sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed)/units_per_meter);
+        //if(debughard) printf("speed %f\n", sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed)/units_per_meter);
         
         if(!onfloor)
             myself.body.yspeed += gravity*delta/2;
