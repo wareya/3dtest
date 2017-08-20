@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+bool debughard = false;
+
 #include <GL/gl3w.h>
 #include <GLFW/glfw3.h>
 
@@ -24,6 +26,10 @@ limitations under the License.
 #include <math.h>
 #ifndef M_PI
 #define M_PI 3.1415926435
+#endif
+
+#ifndef INF
+#define INF (1.0/0.0)
 #endif
 
 #include <signal.h>
@@ -63,6 +69,10 @@ struct coord {
     {
         return x == o.x && y == o.y && z == o.z;
     }
+    bool operator!=(coord o)
+    {
+        return !(*this == o);
+    }
     coord operator-()
     {
         return coord(-x, -y, -z);
@@ -82,6 +92,14 @@ struct coord {
     coord operator-(coord b)
     {
         return coord(x-b.x, y-b.y, z-b.z);
+    }
+    coord operator*(double b)
+    {
+        return coord(x*b, y*b, z*b);
+    }
+    coord operator/(double b)
+    {
+        return coord(x/b, y/b, z/b);
     }
 };
 
@@ -103,21 +121,37 @@ double dot(coord a, coord b)
     return r;
 }
 
+double magnitude(coord a)
+{
+    return sqrt(dot(a, a));
+}
+
 coord normalize(coord a)
 {
-    double magnitude = sqrt(dot(a, a));
-    return mult(a, 1/magnitude);
+    return a/magnitude(a);
+}
+
+double normalized_dot(coord a, coord b)
+{
+    a = normalize(a);
+    b = normalize(b);
+    return dot(a, b);
 }
 
 coord project(coord a, coord b)
 {
-    return mult(b, dot(a, b)/dot(b, b));
+    return b * (dot(a, b)/dot(b, b));
 }
 
+constexpr double fudge_radians = 0.00005;
 coord reject(coord a, coord b)
 {
-    if(dot(a, a) == 0) return coord();
-    return a - project(a, b);
+    coord r = a - project(a, b);
+    return r;
+    //double dot_after = dot(r, b);
+    //if(dot_after > fudge_radians)
+    //double dot_before = dot(a, b);
+    //double dot_doff
 }
 
 coord cross(coord a, coord b)
@@ -243,6 +277,11 @@ struct collision {
     }
 };
 
+coord center(collision c)
+{
+    return (c.points[0]+c.points[1]+c.points[2])/3.0;
+}
+
 struct plane {
     coord intersect;
     coord normal;
@@ -255,7 +294,7 @@ struct plane {
     }
     bool operator==(plane o)
     {
-        return intersect == o.intersect and normal == o.normal && isstatic == o.isstatic;
+        return /*intersect == o.intersect and*/ normal == o.normal && isstatic == o.isstatic;
     }
     bool operator!=(plane o)
     {
@@ -293,13 +332,13 @@ double ray_cast_triangle(coord o, coord m, collision c)
 {
     // no collision from behind (motion in same direction as normal)
     
-    double velocity = sqrt(dot(m, m));
+    double velocity = magnitude(m);
     if(velocity == 0) return 0;
     
     coord d = mult(m, 1/velocity);
     
     if(dot(d, c.normal) > 0)
-        return 0;
+        return INF;
     
     coord e1 = c.points[1]-c.points[0];
     coord e2 = c.points[2]-c.points[0];
@@ -308,33 +347,62 @@ double ray_cast_triangle(coord o, coord m, collision c)
     double det = dot(e1, pvec);
     
     if(det == 0)
-        return 0;
+        return INF;
     
     coord tvec = o-c.points[0];
     double u = dot(tvec, pvec) / det;
     if (u < 0 || u > 1)
-        return 0;
+        return INF;
     
     coord qvec = cross(tvec, e1);
     double v = dot(d, qvec) / det;
     if (v < 0 || u + v > 1)
-        return 0;
+        return INF;
     
     double ret = dot(e2, qvec) / det;
     
-    // too distant, not real
-    if(ret > velocity)
-        return 0;
+    //if(ret < 0)
+    //    return INF;
     
     return ret;
 }
 
-void triangle_castlines_triangle(collision r, coord d, collision c, double & d1, plane & contact_plane)
+double origin_distance_plane(collision c)
 {
-    d1 = 0;
+    coord o = coord(0,0,0);
+    coord m = -c.normal;
     
-    if(dot(r.normal, c.normal) > 0) return;
+    coord d = normalize(m);
     
+    coord e1 = c.points[1]-c.points[0];
+    coord e2 = c.points[2]-c.points[0];
+    
+    coord pvec = cross(d, e2);
+    double det = dot(e1, pvec);
+    
+    if(det == INF)
+        return INF;
+    
+    coord tvec = o-c.points[0];
+    double u = dot(tvec, pvec) / det;
+    //if (u < 0 || u > 1)
+    //    return 0;
+    
+    coord qvec = cross(tvec, e1);
+    double v = dot(d, qvec) / det;
+    //if (v < 0 || u + v > 1)
+    //    return 0;
+    
+    double ret = dot(e2, qvec) / det;
+    
+    return ret;
+}
+
+void triangle_castlines_triangle(collision r, coord d, collision c, double & d1, collision & contact_collision, bool positiveonly = true)
+{
+    d1 = INF;
+    
+    if(normalized_dot(d, c.normal) > 0 and normalized_dot(d, r.normal) < 0) return;
     
     for(int i = 0; i < 3; i++)
     {
@@ -348,29 +416,31 @@ void triangle_castlines_triangle(collision r, coord d, collision c, double & d1,
             auto ro = r2-r1;
             
             auto tri1 = collision(c1, c2, c2+ro);
-            auto tri2 = collision(c1, c2+ro, c1+ro);
+            auto tri2 = collision(c1, c1+ro, c2+ro);
             
-            if(dot(d, tri1.normal) > 0)
+            if(normalized_dot(d, tri1.normal) > 0)
                 tri1 = collision(c1, c2+ro, c2);
-            if(dot(d, tri2.normal) > 0)
-                tri2 = collision(c1, c1+ro, c2+ro);
+            if(normalized_dot(d, tri2.normal) > 0)
+                tri2 = collision(c1, c2+ro, c1+ro);
             
             double d2 = ray_cast_triangle(r2, d, tri1);
             double d3 = ray_cast_triangle(r2, d, tri2);
             
-            if(d2 > 0 and d2 < d3)
+            if(d2 < d1 and d2 < d3 and (!positiveonly or d2 >= 0))
             {
                 d1 = d2;
-                contact_plane.intersect = tri1.points[i];
-                contact_plane.normal = tri1.normal;
-                contact_plane.isstatic = c.isstatic;
+                contact_collision = tri1;
+                contact_collision.isstatic = c.isstatic;
+                //contact_plane.normal = tri1.normal;
+                //contact_plane.isstatic = c.isstatic;
             }
-            else if(d3 > 0)
+            else if(d3 < d1 and d3 != INF and (!positiveonly or d3 >= 0))
             {
                 d1 = d3;
-                contact_plane.intersect = tri1.points[i];
-                contact_plane.normal = tri1.normal;
-                contact_plane.isstatic = c.isstatic;
+                contact_collision = tri2;
+                contact_collision.isstatic = c.isstatic;
+                //contact_plane.normal = tri2.normal;
+                //contact_plane.isstatic = c.isstatic;
             }
         }
     }
@@ -385,55 +455,79 @@ struct rigidbody {
     std::vector<coord> points; // relative to x, y, z
 };
 
-plane zero_plane = plane();
+collision zero_collision = collision();
 
-void rigidbody_cast_triangle(rigidbody & body, coord d, collision c, double & d1, plane & contact_plane)
+void rigidbody_cast_triangle(rigidbody & body, coord position, coord d, collision c, double & d1, collision & contact_collision, bool positiveonly = true, bool verbose = false)
 {
-    auto position = coord(body.x, body.y, body.z);
+    auto unit = coord(1,1,1);
+    auto minima = make_minima(body.minima+position-unit, body.minima+position+d-unit);
+    auto maxima = make_maxima(body.maxima+position+unit, body.maxima+position+d+unit);
     
-    auto minima = make_minima(body.minima+position, body.minima+position+d);
-    auto maxima = make_maxima(body.maxima+position, body.maxima+position+d);
-    
-    d1 = 0;
+    d1 = INF;
     
     if(!aabb_overlap(minima, maxima, c.minima, c.maxima))
         return;
     
+#if 0
+    d1 = ray_cast_triangle(position, d, c);
+    if(d1 != INF)
+    {
+        contact_collision = c;
+        //contact_collision.intersect = center(c);
+        //contact_collision.normal = c.normal;
+        //contact_collision.isstatic = c.isstatic;
+    }
+    return;
+#endif
+    int type = 0;
     for(auto p : body.points)
     {
         double d2 = ray_cast_triangle(p+position, d, c);
-        if(d2 > 0 and (d1 == 0 or d2 < d1))
+        if(d2 < d1 and (!positiveonly or d2 >= 0))
         {
+            type = 1;
             d1 = d2;
-            contact_plane.intersect = c.points[0];
-            contact_plane.normal = c.normal;
-            contact_plane.isstatic = c.isstatic;
+            contact_collision = c;
+            //contact_collision.intersect = center(c);
+            //contact_collision.normal = c.normal;
+            //contact_collision.isstatic = c.isstatic;
         }
     }
     for(auto p : c.points)
     {
         for(auto tri : body.triangles)
         {
-            double d2 = ray_cast_triangle(p-position, -d, tri);
-            if(d2 > 0 and (d1 == 0 or d2 < d1))
+            double d2 = ray_cast_triangle(p, -d, tri+position);
+            if(d2 < d1 and (!positiveonly or d2 >= 0))
             {
+                type = 2;
                 d1 = d2;
-                contact_plane.intersect = c.points[0];
-                contact_plane.normal = -tri.normal;
-                contact_plane.isstatic = c.isstatic;
+                contact_collision = tri;
+                contact_collision.normal = -tri.normal;
+                //contact_collision.intersect = center(c);
+                //contact_collision.normal = -tri.normal;
+                //contact_collision.isstatic = c.isstatic;
             }
         }
     }
     for(auto tri : body.triangles)
     {
         double d2;
-        plane new_plane;
-        triangle_castlines_triangle(tri+position, d, c, d2, new_plane);
-        if(d2 > 0 and (d1 == 0 or d2 < d1))
+        collision new_collision;
+        triangle_castlines_triangle(tri+position, d, c, d2, new_collision, positiveonly);
+        if(d2 < d1 and (!positiveonly or d2 >= 0))
         {
+            type = 3;
             d1 = d2;
-            contact_plane = new_plane;
+            contact_collision = new_collision;
         }
+    }
+    
+    if(debughard and verbose)
+    {
+        if(type == 1) puts("TYPE A");
+        if(type == 2) puts("TYPE B");
+        if(type == 3) puts("TYPE C");
     }
 }
 
@@ -451,17 +545,15 @@ void error_callback(int error, const char* description)
     puts(description);
 }
 
-double rotation_x = 0;
-double rotation_y = 0;
-double rotation_z = 0;
-
-double units_per_meter = 64;
-
 double x = 0;
 double y = -256;
 double z = 0;
 
-double height = 1.75*units_per_meter;
+double rotation_x = 0;
+double rotation_y = 6;
+double rotation_z = 0;
+
+double units_per_meter = 64;
 
 double gravity = 9.8*units_per_meter; // units per second per second
 double friction = 10*units_per_meter; // units per second per second under normal gravity on a flat surface; when equal to gravity, 45 degree slopes are the breaking point of friction and gravity
@@ -489,7 +581,7 @@ void m4mult(float * a, float * b)
     memcpy(a, output, sizeof(float)*16);
 }
 
-bool postprocessing = true;
+bool postprocessing = false;
 
 // diagonal fov
 double fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
@@ -817,7 +909,7 @@ struct renderer {
     {
         if(postprocessing) viewportscale = viewPortRes;
         else viewportscale = 1.0f;
-        glfwSwapInterval(1);
+        glfwSwapInterval(0);
         
         if(!glfwInit()) puts("glfw failed to init"), exit(0);
         
@@ -1965,12 +2057,16 @@ void generate_terrain()
     }
 }
 
+struct collider {
+    rigidbody body;
+    collision contact_collision = zero_collision;
+    std::vector<collision> touching;
+    bool collided = false;
+};
+
 struct projectile {
     double life;
-    rigidbody body;
-    plane contact_plane = zero_plane;
-    std::vector<plane> touching;
-    bool collided = false;
+    collider c;
 };
 
 struct box {
@@ -2014,14 +2110,366 @@ void insert_box_points(double x, double y, double z, double s, std::vector<coord
     points.push_back(coord(x+s, y+s, z+s));
 }
 
+void insert_prism_oct_body(double x, double y, double z, double radius, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic)
+{
+    coord mypoints[16];
+    int n = 0;
+    for(int i = 0; i < 8; i++)
+    {
+        double r = (i+0.5)*45/180*M_PI;
+        double forwards = cos(r)*radius;
+        double rightwards = sin(r)*radius;
+        printf("%f %f\n", forwards, rightwards);
+        mypoints[n++] = coord(rightwards+x, top+y, forwards+z);
+        mypoints[n++] = coord(rightwards+x, bottom+y, forwards+z);
+    }
+    for(int i = 0; i < 16; i++)
+        collisions.push_back(collision(mypoints[i], mypoints[(i+1)%16], mypoints[(i+2)%16], !(i&1), makestatic));
+    coord start = mypoints[0];
+    for(int i = 1; i < 8-1; i++)
+        collisions.push_back(collision(start, mypoints[(i*2)%16], mypoints[((i+1)*2)%16], true, makestatic));
+    start = mypoints[1];
+    for(int i = 1; i < 8-1; i++)
+        collisions.push_back(collision(start, mypoints[((i*2)+1)%16], mypoints[((i+1)*2+1)%16], false, makestatic));
+    
+    for(int i = 0; i < 16; i++)
+        points.push_back(mypoints[i]);
+        
+}
+
+void insert_box_body(double x, double y, double z, double diameter, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic)
+{
+    double radius = diameter*sqrt(2);
+    coord mypoints[8];
+    int n = 0;
+    for(int i = 0; i < 4; i++)
+    {
+        double r = (i+0.5)*90/180*M_PI;
+        double forwards = cos(r)*radius;
+        double rightwards = sin(r)*radius;
+        printf("%f %f\n", forwards, rightwards);
+        mypoints[n++] = coord(rightwards+x, top+y, forwards+z);
+        mypoints[n++] = coord(rightwards+x, bottom+y, forwards+z);
+    }
+    for(int i = 0; i < 8; i++)
+        collisions.push_back(collision(mypoints[i], mypoints[(i+1)%8], mypoints[(i+2)%8], !(i&1), makestatic));
+    coord start = mypoints[0];
+    for(int i = 1; i < 4-1; i++)
+        collisions.push_back(collision(start, mypoints[(i*2)%8], mypoints[((i+1)*2)%8], true, makestatic));
+    start = mypoints[1];
+    for(int i = 1; i < 4-1; i++)
+        collisions.push_back(collision(start, mypoints[((i*2)+1)%8], mypoints[((i+1)*2+1)%8], false, makestatic));
+    
+    for(int i = 0; i < 8; i++)
+        points.push_back(mypoints[i]);
+        
+}
+
 void add_box(double x, double y, double z, double size)
 {
     boxes.push_back(new box({x, y, z, size}));
     
-    insert_box_collisions(x, y, z, size/2, worldtriangles, true);
+    std::vector<coord> dump;
+    insert_box_body(x, y, z, size/2, -size/2, size/2, worldtriangles, dump, true);
+    //insert_box_collisions(x, y, z, size/2, worldtriangles, true);
 }
 
-double shotsize = 32;
+double shotsize = 8;
+
+constexpr double safety = 0.001;
+//constexpr double safety_bounce = 0;
+constexpr double friction_gap = 1;
+
+void body_find_contact(rigidbody & b, std::vector<collision> & world, coord motion, double speed, collision & goodcollision, double & gooddistance)
+{
+    // select closest collidable triangle
+    for(auto p : world)
+    {
+        //double pseudo_safety = 2*safety/abs(dot(direction, p.normal));
+        //if(pseudo_safety == INF or pseudo_safety == -INF) pseudo_safety = ;
+        
+        collision contact_collision = zero_collision;
+        double dist;
+        
+        rigidbody_cast_triangle(b, coord(b.x, b.y, b.z), motion, p, dist, contact_collision, true, true);
+        if(contact_collision != zero_collision)
+        {
+            double dottie = normalized_dot(motion, contact_collision.normal);
+            if(dottie > 0)
+            {
+                puts("fgklasdfgZDFGHKLADG_-==25-32-=2544");
+                continue;
+            }
+            double pseudo_safety = -safety/dottie;
+            //double pseudo_safety = safety*2;
+            //if(dist >= 0 and dist-pseudo_safety < gooddistance and dist-pseudo_safety < speed)
+            if(dist >= 0 and dist-pseudo_safety < gooddistance and dist-pseudo_safety < speed)
+            {
+                goodcollision = contact_collision;
+                gooddistance = dist-pseudo_safety;
+            }
+        }
+    }
+}
+
+void collider_throw(collider & c, std::vector<collision> & world, double delta)
+{
+            
+    rigidbody & b = c.body;
+    
+    collision & last_collision = c.contact_collision;
+    
+    //puts("frame boundary ---------------");
+    
+    std::vector<collision> & touching = c.touching;
+    
+    //touching = {};
+    
+    double time = delta;
+    
+    bool hit_anything_at_all = false;
+    int baditers = 0;
+    int reallybaditers = 0;
+    bool refusedtohit = false;
+    int iters = 0;
+    while(time > 0)
+    {
+        iters++;
+        bool reached = false;
+        
+        auto motion = coord({b.xspeed, b.yspeed, b.zspeed});
+        auto speed = magnitude(motion)*time;
+        
+        if(iters%10 == 0)
+            printf("iters %d speed %f\n", iters, speed);
+        
+        if(motion == coord())
+        {
+            time = 0;
+            continue;
+        }
+        
+        collision goodcollision = zero_collision;
+        double gooddistance = INF;
+        
+        body_find_contact(b, world, motion*time, speed, goodcollision, gooddistance);
+        
+        if(gooddistance != INF)
+        {
+            refusedtohit = false;
+            if(gooddistance >= -safety and gooddistance <= safety) reallybaditers++;
+            
+            auto p = goodcollision;
+            
+            double airtime = gooddistance/speed*time;
+            
+            double newtime = time - abs(airtime);
+                
+            bool already_touching = false;
+            for(unsigned int j = 0; j < touching.size(); j++)
+            {
+                if(touching[j] == p) touching.erase(touching.begin()+(j--));
+                else
+                {
+                    collision contact_collision = zero_collision;
+                    double dist;
+                    rigidbody_cast_triangle(b, coord(b.x, b.y, b.z), -touching[j].normal, touching[j], dist, contact_collision, false);
+                    //rigidbody_cast_triangle(b, , -touching[j].normal, touching[j], dist, contact_collision);
+                    if(dist < -(safety*2) or dist > (safety*2))
+                    {
+                        if(debughard) puts("erasing inside");
+                        if(debughard) printf("%f\n", dist);
+                        touching.erase(touching.begin()+(j--));
+                    }
+                }
+            }
+            touching.push_back(p);
+            
+            // FIXME: handle seams
+            if(last_collision != zero_collision)
+            {
+                auto contact_direction = last_collision.normal;
+                
+                //if(false)//rigidbody_cast_triangle(b, contact_direction, last_triangle) < friction_gap*friction_gap)
+                {
+                    double speed = magnitude(motion);
+                    if(speed != 0)
+                    {
+                        double normalforce = -normalized_dot(contact_direction, coord(0, 1, 0));
+                        if(normalforce < 0) normalforce = 0;
+                        double half_newspeed = speed-friction*abs(airtime)*normalforce;
+                        if(half_newspeed < 0) half_newspeed = 0;
+                        
+                        motion = mult(motion, half_newspeed/speed);
+                        
+                        b.xspeed = motion.x;
+                        b.yspeed = motion.y;
+                        b.zspeed = motion.z;
+                    }
+                }
+            }
+            
+            b.x += airtime*b.xspeed;
+            b.y += airtime*b.yspeed;
+            b.z += airtime*b.zspeed;
+            
+            if(touching.size() > 3)
+            {
+                puts("aslgjaeruogjadfhlaetrhAERFGIKERGAERHGAEUIRTH===========");
+                return;
+            }
+            
+            if(touching.size() == 1)
+            {
+                if(debughard) puts("hit");
+                if(debughard) printf("distance %0.8f\n", gooddistance);
+                if(debughard) printf("early  (%0.8f, %0.8f, %0.8f)\n", motion.x, motion.y, motion.z);
+                auto dot1 = dot(motion, p.normal);
+                motion = reject(motion, p.normal);
+                if(debughard) printf("normal (%0.8f, %0.8f, %0.8f)\n", p.normal.x, p.normal.y, p.normal.z);
+                if(debughard) printf("late   (%0.8f, %0.8f, %0.8f)\n", motion.x, motion.y, motion.z);
+                auto dot2 = dot(motion, p.normal);
+                if(debughard) printf("dots %0.8f %0.8f\n", dot1, dot2);
+            }
+            else if(touching.size() == 2)
+            {
+                auto previous = touching[0];
+                auto current = touching[1];
+                auto mydot = normalized_dot(current.normal, previous.normal);
+                if(mydot <= 0)
+                {
+                    if(debughard) puts("seam");
+                    auto seam = cross(current.normal, previous.normal);
+                    motion = project(motion, seam);
+                }
+                else
+                {
+                    if(debughard) puts("skip");
+                    touching = {current};
+                    motion = reject(motion, current.normal);
+                }
+            }
+            else if(touching.size() == 3)
+            {
+                auto previous_a = touching[0];
+                auto previous_b = touching[1];
+                auto current = touching[2];
+                
+                auto dot_a = normalized_dot(current.normal, previous_a.normal);
+                auto dot_b = normalized_dot(current.normal, previous_b.normal);
+                
+                // skip off both old surfaces
+                if(dot_a > 0 and dot_b > 0)
+                {
+                    if(debughard) puts("A");
+                    touching = {current};
+                    motion = reject(motion, current.normal);
+                }
+                // skip into both old surfaces
+                else if(dot_a <= 0 and dot_b <= 0)
+                {
+                    if(debughard) puts("B");
+                    motion = coord();
+                }
+                else if(dot_a <= 0)
+                {
+                    if(debughard) puts("C");
+                    touching = {previous_a, current};
+                    auto seam = cross(current.normal, previous_a.normal);
+                    motion = project(motion, seam);
+                }
+                else if(dot_b <= 0)
+                {
+                    if(debughard) puts("D");
+                    touching = {previous_b, current};
+                    auto seam = cross(current.normal, previous_b.normal);
+                    motion = project(motion, seam);
+                }
+                else
+                {
+                    puts("-----------------------MAYDAY STATE");
+                    exit(0);
+                }
+            }
+            
+            b.xspeed = motion.x;
+            b.yspeed = motion.y;
+            b.zspeed = motion.z;
+            
+            last_collision = p;
+            reached = true;
+            hit_anything_at_all = true;
+            
+            if(newtime >= time)
+            {
+                //puts("backtracking");
+                baditers++;
+                if(baditers > 3)
+                {
+                    puts("----breaking early");
+                    time = 0;
+                }
+            }
+            else
+            {
+                time = newtime;
+                //printf("looping %f\n", time);
+                //printf("speed %f %f %f\n", motion.x, motion.y, motion.z);
+            }
+        }
+        if(!hit_anything_at_all)
+        {
+            //puts("!hit anything at all");
+            last_collision = zero_collision;
+        }
+        if(!reached)
+        {
+            if(time > 0)
+            {
+                // FIXME: handle seams
+                if(last_collision != zero_collision)
+                {
+                    auto contact_direction = normalize(last_collision.normal);
+                    auto motion = coord({b.xspeed, b.yspeed, b.zspeed});
+                    
+                    //if(false)//rigidbody_cast_triangle(b, contact_direction, last_collision) < friction_gap*friction_gap)
+                    {
+                        double speed = magnitude(motion);
+                        if(speed != 0)
+                        {
+                            double normalforce = -normalized_dot(contact_direction, coord(0, 1, 0));
+                            if(normalforce < 0) normalforce = 0;
+                            double newspeed = speed-friction*time*normalforce;
+                            if(newspeed < 0) newspeed = 0;
+                            
+                            motion = mult(motion, newspeed/speed);
+                            
+                            b.xspeed = motion.x;
+                            b.yspeed = motion.y;
+                            b.zspeed = motion.z;
+                        }
+                    }
+                    //else
+                    //    last_collision = zero_collision;
+                }
+            }
+            break; // no collisions this iteration
+        }
+    }
+    
+    if(time > 0 and !refusedtohit)
+    {
+        b.z += time*b.zspeed;
+        b.x += time*b.xspeed;
+        b.y += time*b.yspeed;
+    }
+}
+
+double height = 1.75*units_per_meter;
+double width = height/2;
+double offset = height*5/90;
+
+collider myself;
 
 int main (int argc, char ** argv)
 {
@@ -2041,11 +2489,28 @@ int main (int argc, char ** argv)
     
     generate_terrain();
     
-    add_box(0, 128, 0, units_per_meter);
+    add_box(128, -256-8, 96+128, units_per_meter);
+    add_box(0, -128, 96, units_per_meter);
+    add_box(0, -128+64, 96, units_per_meter);
+    add_box(64, -128+64, 96, units_per_meter);
     add_box(32, -96-64-128, 256-32, 128);
     add_box(0, -96-64-128, 256-32+128, 128);
     add_box(64, -96, 256, 256);
     add_box(1040, -890, 0, 256);
+    
+    myself.body.x = x;
+    myself.body.y = y;
+    myself.body.z = z;
+    
+    //myself.body.points = {coord(0, height-offset, 0)};
+    
+    //myself.body.minima = coord(0, 0, 0);
+    //myself.body.maxima = coord(0, height-offset, 0);
+    
+    //void insert_prism_oct_body(double x, double y, double z, double radius, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic)
+    insert_prism_oct_body(0, 0, 0, 0.5*units_per_meter, 0, height, myself.body.triangles, myself.body.points, false);
+    myself.body.minima = make_minima(myself.body.points);
+    myself.body.maxima = make_maxima(myself.body.points);
     
     while(!glfwWindowShouldClose(win))
     {
@@ -2071,6 +2536,8 @@ int main (int argc, char ** argv)
             delta = throttle;
             oldtime = starttime;
         }
+        
+        glfwPollEvents();
         
         static double sensitivity = 1/8.0f;
         static bool continuation = false;
@@ -2099,30 +2566,105 @@ int main (int argc, char ** argv)
             continuation = false;
         
         
-        double walkspeed = 8*units_per_meter;//4*units_per_meter;
+        coord walking;
+        
         if(glfwGetKey(win, GLFW_KEY_E))
         {
-            z += walkspeed*delta*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-            x += walkspeed*delta*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-            y += walkspeed*delta*sin(deg2rad(rotation_x));
+            walking.z += delta*cos(deg2rad(rotation_y));//*cos(deg2rad(rotation_x));
+            walking.x += delta*sin(deg2rad(rotation_y));//*cos(deg2rad(rotation_x));
+            walking.y += delta*sin(deg2rad(rotation_x));
         }
         if(glfwGetKey(win, GLFW_KEY_D))
         {
-            z -= walkspeed*delta*cos(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-            x -= walkspeed*delta*sin(deg2rad(rotation_y))*cos(deg2rad(rotation_x));
-            y -= walkspeed*delta*sin(deg2rad(rotation_x));
+            walking.z -= delta*cos(deg2rad(rotation_y));//*cos(deg2rad(rotation_x));
+            walking.x -= delta*sin(deg2rad(rotation_y));//*cos(deg2rad(rotation_x));
+            walking.y -= delta*sin(deg2rad(rotation_x));
         }
         
         if(glfwGetKey(win, GLFW_KEY_W))
         {
-            z += walkspeed*delta*sin(deg2rad(rotation_y));
-            x -= walkspeed*delta*cos(deg2rad(rotation_y));
+            walking.z += delta*sin(deg2rad(rotation_y));
+            walking.x -= delta*cos(deg2rad(rotation_y));
         }
         if(glfwGetKey(win, GLFW_KEY_F))
         {
-            z -= walkspeed*delta*sin(deg2rad(rotation_y));
-            x += walkspeed*delta*cos(deg2rad(rotation_y));
+            walking.z -= delta*sin(deg2rad(rotation_y));
+            walking.x += delta*cos(deg2rad(rotation_y));
         }
+        if(glfwGetKey(win, GLFW_KEY_A))
+        {
+            walking.z /= 2;
+            walking.x /= 2;
+        }
+        
+        
+        collision floor = zero_collision;
+        double distance = INF;
+        body_find_contact(myself.body, worldtriangles, coord(0,1,0), 1, floor, distance);
+        static collision lastfloor = floor;
+        bool jumped = false;
+        double jumpspeed = -5*units_per_meter;
+        double walkspeed = 8*units_per_meter;//4*units_per_meter;
+        
+        if(glfwGetKey(win, GLFW_KEY_SPACE) and floor != zero_collision)
+        {
+            myself.body.yspeed = jumpspeed;
+            jumped = true;
+        }
+        
+        double decay = 0;//pow(0.01, delta);
+        if(walking != coord())
+        {
+            walking = normalize(walking);
+            
+            walking = walking*-normalized_dot(coord(0,1,0), floor.normal); // traction
+            
+            
+            myself.body.xspeed = myself.body.xspeed*decay + walkspeed*walking.x*(1-decay);
+            //myself.body.yspeed = walkspeed*walking.y;
+            myself.body.zspeed = myself.body.zspeed*decay + walkspeed*walking.z*(1-decay);
+        }
+        else if(floor != zero_collision)
+        {
+            //myself.body.xspeed = myself.body.xspeed*decay;
+            //myself.body.yspeed = 0;
+            //myself.body.zspeed = myself.body.zspeed*decay;
+        }
+        //printf("speed %f %f\n", myself.body.xspeed, myself.body.zspeed);
+        
+        myself.body.yspeed += gravity*delta/2;
+        
+        collider_throw(myself, worldtriangles, delta);
+        
+        collision newfloor = zero_collision;
+        double newdistance = INF;
+        body_find_contact(myself.body, worldtriangles, coord(0,16,0), 16, newfloor, newdistance);
+        
+        if(floor != zero_collision and (newdistance > 1 or newfloor == zero_collision) and !jumped)
+        {
+            //puts("azerty");
+            if(newdistance < 16 and -normalized_dot(coord(0,1,0), floor.normal) > sqrt(0.5))
+            {
+                //puts("asdf");
+                coord velocity = coord(myself.body.xspeed, myself.body.yspeed, myself.body.zspeed);
+                velocity = reject(velocity, floor.normal);
+                myself.body.xspeed = velocity.x;
+                myself.body.yspeed = velocity.y;
+                myself.body.zspeed = velocity.z;
+                myself.body.y += newdistance;
+            }
+            else
+            {
+                //puts("wasdrghd");
+                myself.body.yspeed = 0;
+            }
+        }
+        
+        myself.body.yspeed += gravity*delta/2;
+        
+        x = myself.body.x;
+        y = myself.body.y;
+        z = myself.body.z;
         
         static bool right_waspressed = false;
         if(glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)
@@ -2139,20 +2681,21 @@ int main (int argc, char ** argv)
                     for(int ry = -scatter_size; ry <= scatter_size; ry++)
                     {
                         auto newshot = new projectile;
-                        newshot->body.x = x;
-                        newshot->body.y = y+8;
-                        newshot->body.z = z;
+                        newshot->c.body.x = x;
+                        newshot->c.body.y = y+8;
+                        newshot->c.body.z = z;
                         double shotspeed = 8*units_per_meter;
-                        newshot->body.zspeed = shotspeed*cos(deg2rad(rotation_y+ry*scatter_angle))*cos(deg2rad(rotation_x+rx*scatter_angle));
-                        newshot->body.xspeed = shotspeed*sin(deg2rad(rotation_y+ry*scatter_angle))*cos(deg2rad(rotation_x+rx*scatter_angle));
-                        newshot->body.yspeed = shotspeed*sin(deg2rad(rotation_x+rx*scatter_angle));
+                        newshot->c.body.zspeed = shotspeed*cos(deg2rad(rotation_y+ry*scatter_angle))*cos(deg2rad(rotation_x+rx*scatter_angle));
+                        newshot->c.body.xspeed = shotspeed*sin(deg2rad(rotation_y+ry*scatter_angle))*cos(deg2rad(rotation_x+rx*scatter_angle));
+                        newshot->c.body.yspeed = shotspeed*sin(deg2rad(rotation_x+rx*scatter_angle));
                         newshot->life = 8;
     
-                        insert_box_collisions(0, 0, 0, shotsize/2, newshot->body.triangles, false);
-                        insert_box_points(0, 0, 0, shotsize/2, newshot->body.points, false);
+                        //insert_box_collisions(0, 0, 0, shotsize/2, newshot->c.body.triangles, false);
+                        //insert_box_points(0, 0, 0, shotsize/2, newshot->c.body.points, false);
+                        insert_box_body(0, 0, 0, shotsize/2, -shotsize/2, shotsize/2, newshot->c.body.triangles, newshot->c.body.points, false);
                         
-                        newshot->body.minima = make_minima(newshot->body.points);
-                        newshot->body.maxima = make_maxima(newshot->body.points);
+                        newshot->c.body.minima = make_minima(newshot->c.body.points);
+                        newshot->c.body.maxima = make_maxima(newshot->c.body.points);
                         
                         shots.push_back(newshot);
                     }
@@ -2164,9 +2707,6 @@ int main (int argc, char ** argv)
         
         for(unsigned int i = 0; i < shots.size(); i++)
         {
-            constexpr double safety = 0.001;
-            //constexpr double safety_bounce = 0;
-            constexpr double friction_gap = 1;
             auto s = shots[i];
             s->life -= delta;
             if(s->life <= 0)
@@ -2178,207 +2718,18 @@ int main (int argc, char ** argv)
             }
             else
             {
-                rigidbody & b = s->body;
+                s->c.body.yspeed += gravity*delta/2;
                 
-                b.yspeed += gravity*delta/2;
+                collider_throw(s->c, worldtriangles, delta);
                 
-                plane & last_plane = s->contact_plane;
-                
-                std::vector<plane> & touching = s->touching;
-                // forget about non-static collisions that we ended last frame touching
-                for(unsigned int j = 0; j < touching.size(); j++)
-                    if(!touching[j].isstatic)
-                        touching.erase(touching.begin()+(j--));
-                
-                double time = delta;
-                
-                bool hit_anything_at_all = false;
-                while(time > 0)
-                {
-                    bool reached = false;
-                    
-                    auto motion = coord({b.xspeed, b.yspeed, b.zspeed});
-                    auto speed = sqrt(dot(motion, motion))*time;
-                    
-                    if(speed == 0)
-                    {
-                        time = 0;
-                        continue;
-                    }
-                    
-                    plane goodplane = zero_plane;
-                    double gooddistance = 0;
-                    
-                    // select closest collidable triangle
-                    for(auto p : worldtriangles)
-                    {
-                        plane contact_plane = zero_plane;
-                        double dist;
-                        rigidbody_cast_triangle(b, mult(motion, time), p, dist, contact_plane);
-                        
-                        if(dist > 0 and (gooddistance == 0 or dist < gooddistance))
-                        {
-                            goodplane = contact_plane;
-                            gooddistance = dist;
-                        }
-                    }
-                    if(gooddistance > 0)
-                    {
-                        auto p = goodplane;
-                        
-                        double airtime = gooddistance/speed*time;
-                        
-                        double newtime = time - airtime;
-                        if(newtime >= time)
-                        {
-                            time = 0;
-                            break;
-                        }
-                        time = newtime;
-                        
-                        bool already_touching = false;
-                        for(unsigned int j = 0; j < touching.size(); j++)
-                        {
-                            if(touching[j] == p) already_touching = true;
-                            // too similar to the one we're on now and not it, we don't care about it anymore
-                            if(dot(touching[j].normal, p.normal) > 0 && p != touching[j])
-                                touching.erase(touching.begin()+(j--));
-                            // not headed in the same direction, don't care about it anymore
-                            else if(-dot(normalize(motion), touching[j].normal) < 0)
-                                touching.erase(touching.begin()+(j--));
-                        }
-                        if(!already_touching)
-                        {
-                            touching.push_back(p);
-                        }
-                        
-                        // FIXME: handle seams
-                        if(last_plane != zero_plane)
-                        {
-                            auto contact_direction = normalize(last_plane.normal);
-                            
-                            //if(false)//rigidbody_cast_triangle(b, contact_direction, last_triangle) < friction_gap*friction_gap)
-                            {
-                                double speed = sqrt(dot(motion, motion));
-                                if(speed != 0)
-                                {
-                                    double normalforce = -dot(contact_direction, coord(0, 1, 0));
-                                    if(normalforce < 0) normalforce = 0;
-                                    double half_newspeed = speed-friction*airtime*normalforce;
-                                    if(half_newspeed < 0) half_newspeed = 0;
-                                    
-                                    motion = mult(motion, half_newspeed/speed);
-                                    
-                                    b.xspeed = motion.x;
-                                    b.yspeed = motion.y;
-                                    b.zspeed = motion.z;
-                                }
-                            }
-                        }
-                        
-                        b.x += airtime*b.xspeed;
-                        b.y += airtime*b.yspeed;
-                        b.z += airtime*b.zspeed;
-                        
-                        if(touching.size() == 1)
-                        {
-                            b.x += p.normal.x*safety;
-                            b.y += p.normal.y*safety;
-                            b.z += p.normal.z*safety;
-                            
-                            //puts("simple rejection");
-                            motion = reject(motion, p.normal);
-                        }
-                        else if(touching.size() == 2)
-                        {
-                            auto n1 = touching[0].normal;
-                            auto n2 = touching[1].normal;
-                            auto newnormal = normalize(coord(n1.x+n2.x, n1.y+n2.y, n1.z+n2.z));
-                            b.x += newnormal.x*safety;
-                            b.y += newnormal.y*safety;
-                            b.z += newnormal.z*safety;
-                            //puts("seam");
-                            auto seam = cross(touching[0].normal, touching[1].normal);
-                            motion = project(motion, seam);
-                        }
-                        else if(touching.size() == 3)
-                        {
-                            auto n1 = touching[0].normal;
-                            auto n2 = touching[1].normal;
-                            auto n3 = touching[2].normal;
-                            auto newnormal = normalize(coord(n1.x+n2.x+n3.x, n1.y+n2.y+n3.y, n1.z+n2.z+n3.z));
-                            b.x += newnormal.x*safety;
-                            b.y += newnormal.y*safety;
-                            b.z += newnormal.z*safety;
-                            //puts("crevice");
-                            motion = coord(); // zero-vector
-                        }
-                        
-                        b.xspeed = motion.x;
-                        b.yspeed = motion.y;
-                        b.zspeed = motion.z;
-                        
-                        last_plane = p;
-                        reached = true;
-                        hit_anything_at_all = true;
-                    }
-                    if(!hit_anything_at_all)
-                    {
-                        //puts("!hit anything at all");
-                        last_plane = zero_plane;
-                    }
-                    if(!reached)
-                    {
-                        if(time > 0)
-                        {
-                            // FIXME: handle seams
-                            if(last_plane != zero_plane)
-                            {
-                                auto contact_direction = normalize(last_plane.normal);
-                                auto motion = coord({b.xspeed, b.yspeed, b.zspeed});
-                                
-                                //if(false)//rigidbody_cast_triangle(b, contact_direction, last_plane) < friction_gap*friction_gap)
-                                {
-                                    double speed = sqrt(dot(motion, motion));
-                                    if(speed != 0)
-                                    {
-                                        double normalforce = -dot(contact_direction, coord(0, 1, 0));
-                                        if(normalforce < 0) normalforce = 0;
-                                        double newspeed = speed-friction*time*normalforce;
-                                        if(newspeed < 0) newspeed = 0;
-                                        
-                                        motion = mult(motion, newspeed/speed);
-                                        
-                                        b.xspeed = motion.x;
-                                        b.yspeed = motion.y;
-                                        b.zspeed = motion.z;
-                                    }
-                                }
-                                //else
-                                //    last_plane = zero_plane;
-                            }
-                        }
-                        break; // no collisions this iteration
-                    }
-                }
-                
-                if(time > 0)
-                {
-                    b.z += time*b.zspeed;
-                    b.x += time*b.xspeed;
-                    b.y += time*b.yspeed;
-                }
-                
-                b.yspeed += gravity*delta/2;
-                
-                //printf("asdf %f\n", s->yspeed);
+                s->c.body.yspeed += gravity*delta/2;
             }
         }
         
         myrenderer.cycle_start();
         
         for(auto s : shots)
-            myrenderer.draw_box(junk, s->body.x, s->body.y, s->body.z, shotsize);
+            myrenderer.draw_box(junk, s->c.body.x, s->c.body.y, s->c.body.z, shotsize);
         for(auto b : boxes)
             myrenderer.draw_box(wood, b->x, b->y, b->z, b->size);
         
