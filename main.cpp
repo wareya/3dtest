@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 bool debughard = false;
+//bool debughard = true;
 
 #include <GL/gl3w.h>
 #include <GLFW/glfw3.h>
@@ -40,6 +41,8 @@ bool debughard = false;
 #include <chrono>
 #include <thread>
 #include <vector>
+
+#define min(X,Y) (((X)>(Y))?(X):(Y))
 
 struct vertex {
     float x, y, z, u, v, nx, ny, nz;
@@ -398,7 +401,7 @@ double origin_distance_plane(collision c)
     return ret;
 }
 
-void triangle_castlines_triangle(collision r, coord d, collision c, double & d1, collision & contact_collision, bool positiveonly = true)
+void triangle_castlines_triangle(collision r, coord d, collision c, double & d1, collision & contact_collision, double minimum, double maximum)
 {
     d1 = INF;
     
@@ -427,7 +430,7 @@ void triangle_castlines_triangle(collision r, coord d, collision c, double & d1,
             double d2 = ray_cast_triangle(r2, d, tri1);
             double d3 = ray_cast_triangle(r2, d, tri2);
             
-            if(d2 < d1 and d2 < d3 and (!positiveonly or d2 >= 0))
+            if(d2 < d1 and d2 >= minimum and d2 <= maximum)
             {
                 d1 = d2;
                 contact_collision = tri1;
@@ -435,7 +438,7 @@ void triangle_castlines_triangle(collision r, coord d, collision c, double & d1,
                 //contact_plane.normal = tri1.normal;
                 //contact_plane.isstatic = c.isstatic;
             }
-            else if(d3 < d1 and d3 != INF and (!positiveonly or d3 >= 0))
+            else if(d3 < d1 and d3 >= minimum and d3 <= maximum)
             {
                 d1 = d3;
                 contact_collision = tri2;
@@ -458,16 +461,9 @@ struct rigidbody {
 
 collision zero_collision = collision();
 
-void rigidbody_cast_triangle(rigidbody & body, coord position, coord d, collision c, double & d1, collision & contact_collision, bool positiveonly = true, bool verbose = false)
+void rigidbody_cast_triangle(rigidbody & body, coord position, coord d, collision c, double & d1, collision & contact_collision, double minimum, double maximum, bool verbose = false)
 {
-    auto unit = coord(1,1,1);
-    auto minima = make_minima(body.minima+position-unit, body.minima+position+d-unit);
-    auto maxima = make_maxima(body.maxima+position+unit, body.maxima+position+d+unit);
-    
     d1 = INF;
-    
-    if(!aabb_overlap(minima, maxima, c.minima, c.maxima))
-        return;
     
 #if 0
     d1 = ray_cast_triangle(position, d, c);
@@ -484,7 +480,7 @@ void rigidbody_cast_triangle(rigidbody & body, coord position, coord d, collisio
     for(auto p : body.points)
     {
         double d2 = ray_cast_triangle(p+position, d, c);
-        if(d2 < d1 and (!positiveonly or d2 >= 0))
+        if(d2 < d1 and d2 >= minimum and d2 <= maximum)
         {
             type = 1;
             d1 = d2;
@@ -499,7 +495,7 @@ void rigidbody_cast_triangle(rigidbody & body, coord position, coord d, collisio
         for(auto tri : body.triangles)
         {
             double d2 = ray_cast_triangle(p, -d, tri+position);
-            if(d2 < d1 and (!positiveonly or d2 >= 0))
+            if(d2 < d1 and d2 >= minimum and d2 <= maximum)
             {
                 type = 2;
                 d1 = d2;
@@ -515,8 +511,8 @@ void rigidbody_cast_triangle(rigidbody & body, coord position, coord d, collisio
     {
         double d2;
         collision new_collision;
-        triangle_castlines_triangle(tri+position, d, c, d2, new_collision, positiveonly);
-        if(d2 < d1 and (!positiveonly or d2 >= 0))
+        triangle_castlines_triangle(tri+position, d, c, d2, new_collision, minimum, maximum);
+        if(d2 < d1 and d2 >= minimum and d2 <= maximum)
         {
             type = 3;
             d1 = d2;
@@ -524,8 +520,9 @@ void rigidbody_cast_triangle(rigidbody & body, coord position, coord d, collisio
         }
     }
     
-    if(debughard and verbose)
+    if(false and debughard)
     {
+        if(type == 0) puts("TYPE Z");
         if(type == 1) puts("TYPE A");
         if(type == 2) puts("TYPE B");
         if(type == 3) puts("TYPE C");
@@ -2200,37 +2197,45 @@ void add_box(double x, double y, double z, double size)
 
 double shotsize = 8;
 
-constexpr double safety = 0.001;
+constexpr double safety = 0.0001;
 //constexpr double safety_bounce = 0;
 constexpr double friction_gap = 1;
 
 void body_find_contact(rigidbody & b, std::vector<collision> & world, coord motion, double speed, collision & goodcollision, double & gooddistance)
 {
+    gooddistance = INF;
+    goodcollision = zero_collision;
+    
+    auto position = coord(b.x, b.y, b.z);
+    auto unit = coord(1,1,1);
+    auto minima = make_minima(b.minima+position-unit, b.minima+position+motion-unit);
+    auto maxima = make_maxima(b.maxima+position+unit, b.maxima+position+motion+unit);
+    
     // select closest collidable triangle
     for(auto p : world)
     {
-        //double pseudo_safety = 2*safety/abs(dot(direction, p.normal));
-        //if(pseudo_safety == INF or pseudo_safety == -INF) pseudo_safety = ;
+        if(!aabb_overlap(minima, maxima, p.minima, p.maxima))
+            continue;
         
         collision contact_collision = zero_collision;
         double dist;
         
-        rigidbody_cast_triangle(b, coord(b.x, b.y, b.z), motion, p, dist, contact_collision, true, true);
+        rigidbody_cast_triangle(b, position, motion, p, dist, contact_collision, -safety, speed, true);
         if(contact_collision != zero_collision)
         {
-            double dottie = normalized_dot(motion, contact_collision.normal);
-            if(dottie > 0)
-            {
-                puts("fgklasdfgZDFGHKLADG_-==25-32-=2544");
+            double dottie = -normalized_dot(motion, contact_collision.normal);
+            if(dottie < 0)
                 continue;
-            }
-            double pseudo_safety = -safety/dottie;
-            //double pseudo_safety = safety*2;
-            //if(dist >= 0 and dist-pseudo_safety < gooddistance and dist-pseudo_safety < speed)
-            if(dist >= 0 and dist-pseudo_safety < gooddistance and dist-pseudo_safety < speed)
+            
+            double pseudo_safety = safety*2;///dottie;
+            
+            if(pseudo_safety > 10) printf("huge safety %f\n", pseudo_safety);
+            
+            dist -= pseudo_safety;
+            if(dist < gooddistance and dist < speed)
             {
                 goodcollision = contact_collision;
-                gooddistance = dist-pseudo_safety;
+                gooddistance = dist;
             }
         }
     }
@@ -2267,6 +2272,7 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta, 
         if(iters%10 == 0)
             printf("iters %d speed %f\n", iters, speed);
         
+        
         if(motion == coord())
         {
             time = 0;
@@ -2297,12 +2303,15 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta, 
                 {
                     collision contact_collision = zero_collision;
                     double dist;
-                    rigidbody_cast_triangle(b, coord(b.x, b.y, b.z), -touching[j].normal, touching[j], dist, contact_collision, false);
+                    if(debughard) puts("erasure test");
+                    rigidbody_cast_triangle(b, coord(b.x, b.y, b.z), -touching[j].normal, touching[j], dist, contact_collision, -safety*4, safety*4);
                     //rigidbody_cast_triangle(b, , -touching[j].normal, touching[j], dist, contact_collision);
-                    if(dist < -(safety*2) or dist > (safety*2))
+                    if(dist == INF)
                     {
                         if(debughard) puts("erasing inside");
                         if(debughard) printf("%f\n", dist);
+                        if(debughard) printf("%f\n", airtime);
+                        if(debughard) printf("%f\n", time);
                         touching.erase(touching.begin()+(j--));
                     }
                 }
@@ -2312,32 +2321,7 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta, 
             {
                 puts("aslgjaeruogjadfhlaetrhAERFGIKERGAERHGAEUIRTH===========");
                 exit(0);
-                // FIXME: huge hack with no care about correctness
-                //puts("aslgjaeruogjadfhlaetrhAERFGIKERGAERHGAEUIRTH===========");
-                //exit(0);
-                double biggest_dot = -1;
-                collision similar_collision = zero_collision;
-                for(auto t : touching)
-                {
-                    if(dot(t.normal, p.normal) > biggest_dot)
-                    {
-                        biggest_dot = dot(t.normal, p.normal);
-                        similar_collision = t;
-                    }
-                }
-                for(unsigned int j = 0; j < touching.size(); j++)
-                {
-                    if(touching[j] == similar_collision)
-                        touching.erase(touching.begin()+(j--));
-                }
             }
-            if(touching.size() >= 3)
-            {
-                puts("aslgjaeruogjadfhlaetrhAERFGIKERGAERHGAEUIRTH===========");
-                exit(0);
-            }
-            
-            
             
             touching.push_back(p);
             
@@ -2369,6 +2353,9 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta, 
             b.y += airtime*b.yspeed;
             b.z += airtime*b.zspeed;
             
+            
+            double fudge_space = 0;//.00002;
+            
             if(touching.size() == 1)
             {
                 if(debughard) puts("hit");
@@ -2386,7 +2373,7 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta, 
                 auto previous = touching[0];
                 auto current = touching[1];
                 auto mydot = normalized_dot(current.normal, previous.normal);
-                if(mydot <= 0)
+                if(mydot <= fudge_space)
                 {
                     if(debughard) puts("seam");
                     auto seam = cross(current.normal, previous.normal);
@@ -2409,27 +2396,28 @@ void collider_throw(collider & c, std::vector<collision> & world, double delta, 
                 auto dot_b = normalized_dot(current.normal, previous_b.normal);
                 
                 // skip off both old surfaces
-                if(dot_a > 0 and dot_b > 0)
+                if(dot_a > fudge_space and dot_b > fudge_space)
                 {
                     if(debughard) puts("A");
                     touching = {current};
                     motion = reject(motion, current.normal);
                 }
                 // skip into both old surfaces
-                else if(dot_a <= 0 and dot_b <= 0)
+                else if(dot_a <= fudge_space and dot_b <= fudge_space)
                 {
                     if(debughard) puts("B");
+                    //touching = {previous_b, current};
                     motion = coord();
                     break;
                 }
-                else if(dot_a <= 0)
+                else if(dot_a <= fudge_space)
                 {
                     if(debughard) puts("C");
                     touching = {previous_a, current};
                     auto seam = cross(current.normal, previous_a.normal);
                     motion = project(motion, seam);
                 }
-                else if(dot_b <= 0)
+                else if(dot_b <= fudge_space)
                 {
                     if(debughard) puts("D");
                     touching = {previous_b, current};
@@ -2562,6 +2550,7 @@ int main (int argc, char ** argv)
     
     //void insert_prism_oct_body(double x, double y, double z, double radius, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic)
     insert_prism_oct_body(0, 0, 0, 0.5*units_per_meter, 0, height, myself.body.triangles, myself.body.points, false);
+    //insert_prism_oct_body(0, 0, 0, 32, 0, 32, myself.body.triangles, myself.body.points, false);
     myself.body.minima = make_minima(myself.body.points);
     myself.body.maxima = make_maxima(myself.body.points);
     
@@ -2741,7 +2730,7 @@ int main (int argc, char ** argv)
             {
                 // reduces "iceskating" (turns being wider than they should be while holding forward)
                 double drag = pow(0.0001, delta);
-                printf("drag %f\n", drag);
+                if(debughard) printf("drag %f\n", drag);
                 myself.body.xspeed *= drag;
                 myself.body.zspeed *= drag;
                 
@@ -2784,7 +2773,7 @@ int main (int argc, char ** argv)
                 }
             }
         }
-        printf("speed %f\n", sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed)/units_per_meter);
+        if(debughard) printf("speed %f\n", sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed)/units_per_meter);
         
         if(!onfloor)
             myself.body.yspeed += gravity*delta/2;
