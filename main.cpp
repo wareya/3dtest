@@ -2056,8 +2056,8 @@ struct renderer {
 template <typename T>
 struct octnode {
     std::array<octnode *, 8> * nodes;
-    std::set<T *> tags;
-    std::set<T *> outertags;
+    std::vector<T *> tags;
+    std::vector<T *> outertags;
     bool isroot = false;
     coord minima, maxima;
     // top level constructor
@@ -2067,7 +2067,7 @@ struct octnode {
     void allocate_nodes(unsigned level);
     bool contact(const coord & minima, const coord & maxima) const;
     void add(T * a, const coord & minima, const coord & maxima);
-    void potentials(const coord & minima, const coord & maxima, std::set<T *> & ret) const;
+    void potentials(const coord & minima, const coord & maxima, std::vector<T *> & ret) const;
 };
 
 
@@ -2095,7 +2095,10 @@ octnode<T>::octnode(const coord & minima, const coord & maxima)
     this->maxima = maxima;
     
     printf("Building octree of %d bottom-level nodes (%dx%dx%d)\n", (int)ipow(8, depth), (int)ipow(2, depth), (int)ipow(2, depth), (int)ipow(2, depth));
-    printf("(%d total nodes)\n", ((int)ipow(8, depth+1)-1)/7);
+    int size = ((int)ipow(8, depth+1)-1)/7;
+    printf("(%d total nodes)\n", size);
+    printf("node size: %d bytes\n", sizeof(octnode<T>));
+    printf("minimum memory usage size: %d bytes\n", sizeof(octnode<T>)*size );
     
     allocate_nodes(depth);
 }
@@ -2154,32 +2157,53 @@ bool octnode<T>::contact(const coord & minima, const coord & maxima) const
 {
     return aabb_overlap(minima, maxima, this->minima, this->maxima);
 }
+
+template <typename T>
+void sorted_insert(std::vector<T> & a, const T & b)
+{
+    //for(const auto & e : b) if(a.count(e) == 0) a.insert(e);
+    //a.merge(b);
+    //for(const auto & e : b) a.insert(e);
+    if(a.size() == 0)
+        a = {b};
+    else
+    {
+        size_t low = 0;
+        size_t high = a.size()-1;
+        while(1)
+        {
+            if(a[low] == b) return;
+            if(a[high] == b) return;
+            size_t half = (high-low)/2 + low;
+            if(half == low or half == high)
+                a.insert(a.begin()+half, b);
+            else if(a[half] < b)
+                low = half;
+            else if(a[half] > b)
+                high = half;
+            else if(a[half] == b)
+                return;
+        }
+    }
+}
+
 template <typename T>
 void octnode<T>::add(T * a, const coord & minima, const coord & maxima)
 {
     if(contact(minima, maxima))
     {
-        tags.insert(a);
+        sorted_insert(tags, a);
         if(nodes)
             for(auto & e : *nodes)
                 e->add(a, minima, maxima);
     }
     else if(isroot)
-        outertags.insert(a);
-}
-
-template <typename T>
-void dummy_union(std::set<T> & a, const std::set<T> & b)
-{
-    //for(const auto & e : b) if(a.count(e) == 0) a.insert(e);
-    //a.merge(b);
-    //for(const auto & e : b) a.insert(e);
-    a.insert(b.begin(), b.end());
+        sorted_insert(outertags, a);
 }
 
 // returns a sorted list of potential overlaps
 template <>
-void octnode<coord>::potentials(const coord & minima, const coord & maxima, std::set<coord *> & ret) const
+void octnode<coord>::potentials(const coord & minima, const coord & maxima, std::vector<coord *> & ret) const
 {
     #if 0
     dummy_union(ret, outertags);
@@ -2192,7 +2216,7 @@ void octnode<coord>::potentials(const coord & minima, const coord & maxima, std:
         for(const auto & e : outertags)
         {
             if(aabb_overlap(*e, *e, minima, maxima))
-                ret.insert(e);
+                sorted_insert(ret, e);
         }
     }
     // check if we're overlapping, then ask our child nodes, or insert if we're the last child
@@ -2204,7 +2228,7 @@ void octnode<coord>::potentials(const coord & minima, const coord & maxima, std:
             for(const auto & e : tags)
             {
                 if(aabb_overlap(*e, *e, minima, maxima))
-                    ret.insert(e);
+                    sorted_insert(ret, e);
             }
         }
         else
@@ -2215,7 +2239,7 @@ void octnode<coord>::potentials(const coord & minima, const coord & maxima, std:
 
 // returns a sorted list of potential overlaps
 template <typename T>
-void octnode<T>::potentials(const coord & minima, const coord & maxima, std::set<T *> & ret) const
+void octnode<T>::potentials(const coord & minima, const coord & maxima, std::vector<T *> & ret) const
 {
     #if 0
     dummy_union(ret, outertags);
@@ -2228,7 +2252,7 @@ void octnode<T>::potentials(const coord & minima, const coord & maxima, std::set
         for(const auto & e : outertags)
         {
             if(aabb_overlap(e->minima, e->maxima, minima, maxima))
-                ret.insert(e);
+                sorted_insert(ret, e);
         }
     }
     // check if we're overlapping, then ask our child nodes, or insert if we're the last child
@@ -2244,7 +2268,7 @@ void octnode<T>::potentials(const coord & minima, const coord & maxima, std::set
             for(const auto & e : tags)
             {
                 if(aabb_overlap(e->minima, e->maxima, minima, maxima))
-                    ret.insert(e);
+                    sorted_insert(ret, e);
             }
         }
         else
@@ -2280,21 +2304,21 @@ struct worldstew {
         point_tree->add(heap, value, value);
         return heap;
     }
-    std::set<triholder *> broadphase_tri(const coord & minima, const coord & maxima) const
+    std::vector<triholder *> broadphase_tri(const coord & minima, const coord & maxima) const
     {
-        std::set<triholder *> ret;
+        std::vector<triholder *> ret;
         tri_tree->potentials(minima, maxima, ret);
         return ret;
     }
-    std::set<lineholder *> broadphase_line(const coord & minima, const coord & maxima) const
+    std::vector<lineholder *> broadphase_line(const coord & minima, const coord & maxima) const
     {
-        std::set<lineholder *> ret;
+        std::vector<lineholder *> ret;
         line_tree->potentials(minima, maxima, ret);
         return ret;
     }
-    std::set<coord *> broadphase_point(const coord & minima, const coord & maxima) const
+    std::vector<coord *> broadphase_point(const coord & minima, const coord & maxima) const
     {
-        std::set<coord *> ret;
+        std::vector<coord *> ret;
         point_tree->potentials(minima, maxima, ret);
         return ret;
     }
@@ -2304,7 +2328,7 @@ worldstew world;
 
 inline void lines_cast_lines(const std::vector<lineholder *> & holder, const coord & position, const coord & motion,
                              const coord & minima, const coord & maxima,
-                             const std::set<lineholder *> & holder2,
+                             const std::vector<lineholder *> & holder2,
                              double & d1, triangle & contact_collision,
                              const double & minimum, const double & maximum)
 {
@@ -2360,7 +2384,7 @@ inline void lines_cast_lines(const std::vector<lineholder *> & holder, const coo
 
 void rigidbody_cast_world(const collisionstew & body, const coord & position, const coord & motion,
                           const coord & minima, const coord & maxima,
-                          const std::set<triholder *>&  tris, const std::set<lineholder *> & lines, const std::set<coord *> & points,
+                          const std::vector<triholder *>&  tris, const std::vector<lineholder *> & lines, const std::vector<coord *> & points,
                           double & d1, triangle & contact_collision,
                           const double & minimum, const double & maximum, bool verbose = false)
 {
@@ -3237,7 +3261,7 @@ int main (int argc, char ** argv)
         auto newtime = glfwGetTime();
         auto frametime = (newtime-starttime);
         
-        if(0)
+        if(1)
         {
             printf("Frametime: %.2fms\n"
             "Possible framerate: %.2f\n"
