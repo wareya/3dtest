@@ -555,7 +555,7 @@ void m4mult(float * a, float * b)
     memcpy(a, output, sizeof(float)*16);
 }
 
-bool postprocessing = true;
+bool postprocessing = false;
 
 // diagonal fov
 double fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
@@ -3261,7 +3261,7 @@ int main (int argc, char ** argv)
         auto newtime = glfwGetTime();
         auto frametime = (newtime-starttime);
         
-        if(1)
+        if(0)
         {
             printf("Frametime: %.2fms\n"
             "Possible framerate: %.2f\n"
