@@ -511,7 +511,7 @@ void checkerr(int line)
     GLenum err;
     while((err = glGetError()) != GL_NO_ERROR)
     {
-        //printf("GL error %04X from line %d\n", err, line);
+        printf("GL error %04X from line %d\n", err, line);
     }   
 }
 
@@ -564,7 +564,7 @@ double fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
 // fisheye projection post shader
 bool polar = true;
 
-int msaa = postprocessing?4:8;
+int msaa = postprocessing?1:8;
 double viewPortRes = postprocessing?3.0f:1.0f;
 
 bool dosharpen = true;
@@ -816,7 +816,7 @@ struct renderer {
     };
     
     // FBO 0: hi-res, 1: downsampled raw, 2/3: double wet buffers (e.g. multipass bloom)
-    unsigned int MainVAO, VIO, VBO, FRBO, RBOC, RBOD, FBO, FBOtexture0, FBOtexture1, FBOtexture2, FBOtexture3, FBOtexture4, CubeVAO, CubeVBO, CubeVIO, jinctexid;
+    unsigned int MainVAO, VIO, VBO, FRBO, RBOC, RBOD, FBO_hires, FBO, FBOtexture0, FBOtexture1, FBOtexture2, FBOtexture3, FBOtexture4, CubeVAO, CubeVBO, CubeVIO, jinctexid;
     int w, h;
     unsigned int vshader;
     unsigned int fshader;
@@ -892,11 +892,13 @@ struct renderer {
         else viewportscale = 1.0f;
         glfwSwapInterval(0);
         
+        
         if(!glfwInit()) puts("glfw failed to init"), exit(0);
         
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, 1); 
         
         win = glfwCreateWindow(1280, 720, "Hello, World!", NULL, NULL);
         
@@ -907,16 +909,28 @@ struct renderer {
         
         printf("OpenGL %s, GLSL %s\n", glGetString(GL_VERSION), glGetString(GL_SHADING_LANGUAGE_VERSION));
         
+        checkerr(__LINE__);
+        
+        //void (*glDebugMessageCallback)(DEBUGPROC, void *);
+        //glDebugMessageCallback = gl3wGetProcAddress("glDebugMessageCallback");
+        
         //glfwSwapBuffers(win);
         glfwGetFramebufferSize(win, &w, &h);
         
+        checkerr(__LINE__);
+        
         glViewport(0, 0, w, h);
+        
+        checkerr(__LINE__);
         
         glEnable(GL_DEBUG_OUTPUT);
         glDebugMessageCallback([](GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam)
         {
-            puts(message);
+            if(severity != GL_DEBUG_SEVERITY_NOTIFICATION)
+                puts(message);
         }, nullptr);
+        
+        checkerr(__LINE__);
         
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
@@ -926,40 +940,64 @@ struct renderer {
         glPrimitiveRestartIndex(65535);
         glFrontFace(GL_CCW);
         
+        checkerr(__LINE__);
+        
         glEnable(GL_SCISSOR_TEST);
         glScissor(0, 0, w*viewportscale, h*viewportscale);
+        glDisable(GL_STENCIL_TEST);
+        
+        checkerr(__LINE__);
         
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        
+        checkerr(__LINE__);
         
         glGenVertexArrays(1, &MainVAO);
         glGenBuffers(1, &VBO);
         glGenBuffers(1, &VIO);
         
+        checkerr(__LINE__);
+        
         glBindVertexArray(MainVAO);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        
+        checkerr(__LINE__);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)0);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, u));
         glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, nx));
+        
+        checkerr(__LINE__);
         glEnableVertexAttribArray(0);
         glEnableVertexAttribArray(1);
         glEnableVertexAttribArray(2);
         
+        checkerr(__LINE__);
+        
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, VIO);
         
+        checkerr(__LINE__);
         
         glGenVertexArrays(1, &CubeVAO);
         glGenBuffers(1, &CubeVBO);
         glGenBuffers(1, &CubeVIO);
         
+        checkerr(__LINE__);
+        
         glBindVertexArray(CubeVAO);
+        
+        checkerr(__LINE__);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        
+        checkerr(__LINE__);
         
         glBindBuffer(GL_ARRAY_BUFFER, CubeVBO);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(basicvertex), (void*)0);
         glEnableVertexAttribArray(0);
+        
+        checkerr(__LINE__);
         
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, CubeVIO);
         
@@ -1058,16 +1096,26 @@ struct renderer {
         glGenRenderbuffers(1, &RBOC); 
         glGenRenderbuffers(1, &RBOD); 
         glBindRenderbuffer(GL_RENDERBUFFER, RBOC);
-        glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_RGBA16F, w*viewportscale, h*viewportscale);
+        if(msaa != 1)
+            glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_RGBA16F, w*viewportscale, h*viewportscale);
+        else
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA16F, w*viewportscale, h*viewportscale);
         glBindRenderbuffer(GL_RENDERBUFFER, RBOD);
-        glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_DEPTH_COMPONENT32F, w*viewportscale, h*viewportscale);
+        if(msaa != 1)
+            glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_DEPTH_COMPONENT32F, w*viewportscale, h*viewportscale);
+        else
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F, w*viewportscale, h*viewportscale);
         
         // make framebuffer
         
         if(postprocessing)
         {
-            glGenFramebuffers(1, &FBO); 
+            glGenFramebuffers(1, &FBO_hires);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_hires);
+            glGenFramebuffers(1, &FBO);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+            
+            
             checkerr(__LINE__);
             
             static float jinctexture[512];
@@ -1293,6 +1341,7 @@ struct renderer {
                 // convert from polar angle to planar distance\n\
                 float dist = tan(pole*fov)/tan(fov);\n\
                 vec2 newcoord = badcoord/pole*dist/aspect_v/2 + vec2(0.5, 0.5);\n\
+                //vec2 newnewcoord = myTexCoord*2-newcoord;\n\
                 fragColor = texture2D(mytexture, newcoord);\n\
             }\n");
             
@@ -1410,11 +1459,10 @@ struct renderer {
             
             glActiveTexture(GL_TEXTURE0);
             
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_hires);
+            
             glGenTextures(1, &FBOtexture0);
             glGenTextures(1, &FBOtexture1);
-            glGenTextures(1, &FBOtexture2);
-            glGenTextures(1, &FBOtexture3);
-            glGenTextures(1, &FBOtexture4);
             
             glBindTexture(GL_TEXTURE_2D, FBOtexture0);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewportscale, h*viewportscale, 0, GL_RGB, GL_FLOAT, NULL);
@@ -1422,7 +1470,7 @@ struct renderer {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, FBOtexture0, 0);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, FBOtexture0, 0);
             
             glBindTexture(GL_TEXTURE_2D, FBOtexture1);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w*viewportscale, h*viewportscale, 0, GL_RGB, GL_FLOAT, NULL);
@@ -1430,8 +1478,14 @@ struct renderer {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, FBOtexture1, 0);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, FBOtexture1, 0);
             checkerr(__LINE__);
+            
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+            
+            glGenTextures(1, &FBOtexture2);
+            glGenTextures(1, &FBOtexture3);
+            glGenTextures(1, &FBOtexture4);
             
             glBindTexture(GL_TEXTURE_2D, FBOtexture2);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, NULL);
@@ -1439,7 +1493,7 @@ struct renderer {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2,  GL_TEXTURE_2D, FBOtexture2, 0);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT2,  GL_TEXTURE_2D, FBOtexture2, 0);
             checkerr(__LINE__);
             
             glBindTexture(GL_TEXTURE_2D, FBOtexture3);
@@ -1448,7 +1502,7 @@ struct renderer {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, FBOtexture3, 0);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, FBOtexture3, 0);
             checkerr(__LINE__);
             
             glBindTexture(GL_TEXTURE_2D, FBOtexture4);
@@ -1457,7 +1511,7 @@ struct renderer {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, FBOtexture4, 0);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, FBOtexture4, 0);
             checkerr(__LINE__);
             
             checkerr(__LINE__);
@@ -1479,17 +1533,22 @@ struct renderer {
             
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FRBO);
             glBindRenderbuffer(GL_RENDERBUFFER, RBOC);
-            glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_RGBA16F, w*viewportscale, h*viewportscale);
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, RBOC);
             
+            if(msaa != 1)
+                glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_RGBA16F, w*viewportscale, h*viewportscale);
+            else
+                glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA16F, w*viewportscale, h*viewportscale);
             glBindRenderbuffer(GL_RENDERBUFFER, RBOD);
-            glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_DEPTH_COMPONENT32F, w*viewportscale, h*viewportscale);
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, RBOD);
+            if(msaa != 1)
+                glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa, GL_DEPTH_COMPONENT32F, w*viewportscale, h*viewportscale);
+            else
+                glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F, w*viewportscale, h*viewportscale);
             
             if(postprocessing)
             {
                 glActiveTexture(GL_TEXTURE0);
-                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+                
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_hires);
                 
                 glBindTexture(GL_TEXTURE_2D, FBOtexture0);
                 checkerr(__LINE__);
@@ -1516,6 +1575,8 @@ struct renderer {
                 checkerr(__LINE__);
                 glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, FBOtexture1, 0);
                 checkerr(__LINE__);
+                
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
                 
                 glBindTexture(GL_TEXTURE_2D, FBOtexture2);
                 checkerr(__LINE__);
@@ -1561,13 +1622,13 @@ struct renderer {
             }
         }
         
-        glViewport(0, 0, w*viewportscale, h*viewportscale);
-        glScissor(0, 0, w*viewportscale, h*viewportscale);
-        
         glUseProgram(program);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FRBO);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, RBOC);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, RBOD);
+        glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, RBOC);
+        glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, RBOD);
+        
+        glViewport(0, 0, w*viewportscale, h*viewportscale);
+        glScissor(0, 0, w*viewportscale, h*viewportscale);
         
         glDrawBuffer(GL_COLOR_ATTACHMENT0);
         glEnable(GL_DEPTH_TEST);
@@ -1652,10 +1713,10 @@ struct renderer {
     }
     void cycle_end()
     {
-        
         if(!postprocessing)
         {
             glBindFramebuffer(GL_READ_FRAMEBUFFER, FRBO);
+            glFramebufferRenderbuffer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, RBOC);
             glReadBuffer(GL_COLOR_ATTACHMENT0);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glDrawBuffer(GL_BACK);
@@ -1665,7 +1726,6 @@ struct renderer {
         if(postprocessing)
         {
             glDisable(GL_CULL_FACE);
-            glViewport(0, 0, w*viewportscale, h*viewportscale);
             //glUseProgram(program);
             glBindVertexArray(MainVAO);
             glBindBuffer(GL_ARRAY_BUFFER, VBO);
@@ -1683,22 +1743,38 @@ struct renderer {
             glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,  GL_DYNAMIC_DRAW);
             checkerr(__LINE__);
             
+            glViewport(0, 0, w*viewportscale, h*viewportscale);
+            glScissor(0, 0, w*viewportscale, h*viewportscale);
+            
             glBindFramebuffer(GL_READ_FRAMEBUFFER, FRBO);
             glFramebufferRenderbuffer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, RBOC);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+            glReadBuffer(GL_COLOR_ATTACHMENT0);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_hires);
             glDrawBuffer(GL_COLOR_ATTACHMENT0);
             glBlitFramebuffer(0,0,w*viewportscale,h*viewportscale,0,0,w*viewportscale,h*viewportscale, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            
+            // for debugging what's present in the framebuffer
+            #if 0
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, FBO_hires);
+            checkerr(__LINE__);
+            glReadBuffer(GL_COLOR_ATTACHMENT0);
+            checkerr(__LINE__);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            checkerr(__LINE__);
+            glDrawBuffer(GL_BACK);
+            checkerr(__LINE__);
+            glBlitFramebuffer(0,0,w*viewportscale,h*viewportscale, 0,0,w,h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            checkerr(__LINE__);
+            glfwSwapBuffers(win);
+            checkerr(__LINE__);
             glFinish();
             checkerr(__LINE__);
-        
+            return;
+            #endif
+            
             unsigned int last_draw_buffer = GL_COLOR_ATTACHMENT0;
             unsigned int last_draw_texture = FBOtexture0;
             
-            auto BUFFER_A = [&]()
-            {
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
-            };
             auto BUFFER_DONE = [&]()
             {
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, FBO);
@@ -1712,7 +1788,9 @@ struct renderer {
             {
                 if(last_draw_buffer == GL_COLOR_ATTACHMENT0)
                 {
-                    BUFFER_A();
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, FBO_hires);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_hires);
+                    
                     glDrawBuffer(GL_COLOR_ATTACHMENT1);
                     last_draw_texture = FBOtexture1;
                     last_draw_buffer = GL_COLOR_ATTACHMENT1;
@@ -1720,7 +1798,9 @@ struct renderer {
                 }
                 else if(last_draw_buffer == GL_COLOR_ATTACHMENT1)
                 {
-                    BUFFER_A();
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, FBO_hires);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+                    
                     glDrawBuffer(GL_COLOR_ATTACHMENT2);
                     last_draw_texture = FBOtexture2;
                     last_draw_buffer = GL_COLOR_ATTACHMENT2;
@@ -1728,7 +1808,9 @@ struct renderer {
                 }
                 else if(last_draw_buffer == GL_COLOR_ATTACHMENT2)
                 {
-                    BUFFER_A();
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, FBO);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+                    
                     glDrawBuffer(GL_COLOR_ATTACHMENT3);
                     last_draw_texture = FBOtexture3;
                     last_draw_buffer = GL_COLOR_ATTACHMENT3;
@@ -1736,7 +1818,9 @@ struct renderer {
                 }
                 else if(last_draw_buffer == GL_COLOR_ATTACHMENT3)
                 {
-                    BUFFER_A();
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, FBO);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+                    
                     glDrawBuffer(GL_COLOR_ATTACHMENT4);
                     last_draw_texture = FBOtexture4;
                     last_draw_buffer = GL_COLOR_ATTACHMENT4;
@@ -1744,7 +1828,9 @@ struct renderer {
                 }
                 else if(last_draw_buffer == GL_COLOR_ATTACHMENT4)
                 {
-                    BUFFER_A();
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, FBO);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+                    
                     glDrawBuffer(GL_COLOR_ATTACHMENT3);
                     last_draw_texture = FBOtexture3;
                     last_draw_buffer = GL_COLOR_ATTACHMENT3;
@@ -2149,7 +2235,11 @@ void octnode<T>::potentials(const coord & minima, const coord & maxima, std::set
     if(contact(minima, maxima))
     {
         // pretend to be a child node if the object completely encompasses us
+        #if 0
+        if(true)
+        #else
         if(nodes == nullptr or aabb_contained(this->minima, this->maxima, minima, maxima))
+        #endif
         {
             for(const auto & e : tags)
             {
@@ -2775,8 +2865,8 @@ void body_find_contact(const rigidbody & b, const worldstew & world, const coord
             printf("%f %f %f\n", goodcollision.normal.x, goodcollision.normal.y, goodcollision.normal.z);
             exit(0);
         }
-        gooddistance -= safety; // This can us to eject into other geometry in very artificial situations. Make sure all your bodies are larger than safety*2 in every dimension.
-        gooddistance = max(0, gooddistance);
+        gooddistance -= safety;
+        gooddistance = max(0, gooddistance); // prevents us from ejecting into other walls
     }
     
     end = glfwGetTime();
