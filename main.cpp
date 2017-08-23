@@ -984,7 +984,7 @@ struct renderer {
         void main()\n\
         {\n\
             vec4 color = texture2D(mytexture, myTexCoord, 0);\n\
-            float dot = dot(normalize(myNormal), normalize(vec3(-1.0,-1.0,-1.0)));\n\
+            float dot = -dot(normalize(myNormal), normalize(vec3(1.0,1.0,-1.0)));\n\
             dot = max(0, dot);\n\
             color.rgb = pow(color.rgb, vec3(gamma));\n\
             vec3 diffuse = color.rgb * dot;\n\
@@ -2110,7 +2110,7 @@ void octnode<coord>::potentials(const coord & minima, const coord & maxima, std:
             }
         }
         else
-            for(auto & e : *nodes)
+            for(const auto & e : *nodes)
                 e->potentials(minima, maxima, ret);
     }
 }
@@ -2146,7 +2146,7 @@ void octnode<T>::potentials(const coord & minima, const coord & maxima, std::set
             }
         }
         else
-            for(auto & e : *nodes)
+            for(const auto & e : *nodes)
                 e->potentials(minima, maxima, ret);
     }
 }
@@ -3500,8 +3500,8 @@ int main (int argc, char ** argv)
         
         myrenderer.cycle_start();
         
-        //for(const auto & s : shots)
-        //    myrenderer.draw_box(junk, s->c.body.x, s->c.body.y, s->c.body.z, shotsize);
+        for(const auto & s : shots)
+            myrenderer.draw_box(junk, s->c.body.x, s->c.body.y, s->c.body.z, shotsize);
         for(const auto & b : boxes)
             myrenderer.draw_box(wood, b->x, b->y, b->z, b->size, b->yangle);
         
