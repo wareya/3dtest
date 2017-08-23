@@ -137,11 +137,6 @@ coord normalize(const coord & a)
     return a/magnitude(a);
 }
 
-double normalized_dot(const coord & a, const coord & b)
-{
-    return dot(normalize(a), normalize(b));
-}
-
 coord project(const coord & a, const coord & b)
 {
     return b * (dot(a, b)/dot(b, b));
@@ -179,7 +174,42 @@ coord make_maxima(const coord & a, const coord & b)
     return -make_minima(-a, -b);
 }
 
-coord make_minima(const std::vector<coord> & coords)
+template <typename T>
+coord make_minima(const T & coords)
+{
+    coord minima;
+    
+    minima = *coords[0];
+    
+    for(const auto & c : coords)
+    {
+        if(c->x < minima.x) minima.x = c->x;
+        if(c->y < minima.y) minima.y = c->y;
+        if(c->z < minima.z) minima.z = c->z;
+    }
+    
+    return minima;
+}
+
+template <typename T>
+coord make_maxima(const T & coords)
+{
+    coord maxima;
+    
+    maxima = *coords[0];
+    
+    for(const auto & c : coords)
+    {
+        if(c->x > maxima.x) maxima.x = c->x;
+        if(c->y > maxima.y) maxima.y = c->y;
+        if(c->z > maxima.z) maxima.z = c->z;
+    }
+    
+    return maxima;
+}
+
+template <int N>
+coord array_make_minima(const std::array<coord, N> & coords)
 {
     coord minima;
     
@@ -195,7 +225,8 @@ coord make_minima(const std::vector<coord> & coords)
     return minima;
 }
 
-coord make_maxima(const std::vector<coord> & coords)
+template <int N>
+coord array_make_maxima(const std::array<coord, N> & coords)
 {
     coord maxima;
     
@@ -227,95 +258,187 @@ bool aabb_contained(const coord & minima_a, const coord & maxima_a, const coord 
            minima_a.z >= minima_b.z and maxima_a.z <= maxima_b.z;
 }
 
-struct collision {
+struct triangle {
     // a flat triangle (with vertices in counter-clockwise direction when looking down at it) has a normal pointing up and acts like a floor
-    std::vector<coord> points;
+    std::array<coord, 3> points;
     coord normal;
-    
-    // bounding box
-    coord minima;
-    coord maxima;
-    
-    bool isstatic = true;
-    collision()
+    triangle()
     {
         points = {coord(), coord(), coord()};
         
         normal = coord(0,-1,0);
+    }
+    triangle(const coord & i, const coord & j, const coord & k)
+    {
+        points = {i, j, k};
+        // This Is Right. cross((0,0,-1),(1,0,0)) (i.e. cross(backwards, rightwards)) should produce (0,-1,0) (i.e. upwards)
+        normal = normalize(cross(points[1]-points[0], points[2]-points[0]));
+    }
+    triangle(const coord & i, const coord & j, const coord & k, const coord & norm)
+    {
+        points = {i, j, k};
+        normal = norm;
+    }
+    bool operator==(const triangle & o) const
+    {
+        return points[0] == o.points[0] && points[1] == o.points[1] && points[2] == o.points[2] && normal == o.normal;
+    }
+    bool operator!=(const triangle & o) const
+    {
+        return !(*this == o);
+    }
+    triangle operator+(const coord & v) const
+    {
+        return triangle(points[0]+v, points[1]+v, points[2]+v, normal);
+    }
+    triangle operator-(const coord & v) const
+    {
+        return triangle(points[0]-v, points[1]-v, points[2]-v, normal);
+    }
+};
+
+struct line {
+    std::array<coord, 2> points;
+    
+    coord normal1;
+    coord normal2;
+    
+    line()
+    {
+        points = {coord(), coord()};
+        normal1 = coord();
+        normal2 = coord();
+    }
+    line(const coord & i, const coord & j, const coord & n1, const coord & n2)
+    {
+        points = {i, j};
+        normal1 = n1;
+        normal2 = n2;
+    }
+    bool operator==(const line & o) const
+    {
+        return points[0] == o.points[0] && points[1] == o.points[1];
+    }
+    bool operator!=(const line & o) const
+    {
+        return !(*this == o);
+    }
+    line operator+(const coord & v) const
+    {
+        return line(points[0]+v, points[1]+v, normal1, normal2);
+    }
+    line operator-(const coord & v) const
+    {
+        return line(points[0]-v, points[1]-v, normal1, normal2);
+    }
+};
+
+struct lineholder {
+    line lin;
+    
+    coord minima;
+    coord maxima;
+    
+    lineholder()
+    {
+        lin = line();
         
         minima = coord();
         maxima = coord();
     }
-    collision(const coord & i, const coord & j, const coord & k, bool invert = false, bool makestatic = true)
+    lineholder(const coord & i, const coord & j, const coord & n1, const coord & n2)
     {
-        if(invert)
-            points = {i, k, j};
-        else
-            points = {i, j, k};
-        // This Is Right. cross((0,0,-1),(1,0,0)) (i.e. cross(backwards, rightwards)) should produce (0,-1,0) (i.e. upwards)
-        normal = normalize(cross(points[1]-points[0], points[2]-points[0]));
-        isstatic = makestatic;
-        
-        minima = make_minima(points);
-        maxima = make_maxima(points);
+        lin = line(i, j, n1, n2);
+        minima = array_make_minima<2>(lin.points);
+        maxima = array_make_maxima<2>(lin.points);
     }
-    collision(const coord & i, const coord & j, const coord & k, const coord & norm, const coord & minim, const coord & maxim, bool isstat)
+    lineholder(const line & lina)
     {
-        points = {i, j, k};
-        normal = norm;
+        lin = lina;
+        minima = array_make_minima<2>(lin.points);
+        maxima = array_make_maxima<2>(lin.points);
+    }
+    lineholder(const line & lina, const coord & minim, const coord & maxim)
+    {
+        lin = lina;
         minima = minim;
         maxima = maxim;
-        isstatic = isstat;
     }
-    bool operator==(const collision & o) const
+    bool operator==(const lineholder & o) const
     {
-        return points[0] == o.points[0] && points[1] == o.points[1] && points[2] == o.points[2] && normal == o.normal;
+        return lin == o.lin;
     }
-    bool operator!=(const collision & o) const
+    bool operator!=(const lineholder & o) const
     {
         return !(*this == o);
     }
-    collision operator+(const coord & v) const
+    lineholder operator+(const coord & v) const
     {
-        return collision(points[0]+v, points[1]+v, points[2]+v, normal, minima+v, maxima+v, isstatic);
+        return lineholder(lin+v, minima+v, maxima+v);
     }
 };
 
-coord make_minima(const std::vector<collision> & triangles)
-{
+struct triholder {
+    triangle tri;
+    
     coord minima;
-    
-    minima = triangles[0].minima;
-    
-    for(const auto & t : triangles)
-        minima = make_minima(t.minima, minima);
-    
-    return minima;
-}
-
-
-coord make_maxima(const std::vector<collision> & triangles)
-{
     coord maxima;
     
-    maxima = triangles[0].maxima;
-    
-    for(const auto & t : triangles)
-        maxima = -make_minima(-t.maxima, -maxima);
-    
-    return maxima;
-}
+    triholder()
+    {
+        tri = triangle();
+        
+        minima = coord();
+        maxima = coord();
+    }
+    triholder(const coord & i, const coord & j, const coord & k, bool invert = false)
+    {
+        if(invert)
+            tri = triangle(i, k, j);
+        else
+            tri = triangle(i, j, k);
+        
+        minima = array_make_minima<3>(tri.points);
+        maxima = array_make_maxima<3>(tri.points);
+    }
+    triholder(const triangle & tria)
+    {
+        tri = tria;
+        
+        minima = array_make_minima<3>(tri.points);
+        maxima = array_make_maxima<3>(tri.points);
+    }
+    triholder(const triangle & tria, const coord & minim, const coord & maxim)
+    {
+        tri = tria;
+        minima = minim;
+        maxima = maxim;
+    }
+    bool operator==(const triholder & o) const
+    {
+        return tri == o.tri;
+    }
+    bool operator!=(const triholder & o) const
+    {
+        return !(*this == o);
+    }
+    triholder operator+(const coord & v) const
+    {
+        return triholder(tri+v, minima+v, maxima+v);
+    }
+};
 
-double ray_cast_triangle(const coord & o, const coord & m, const collision & c)
+inline double ray_cast_triangle(const coord & o, const coord & m, const triangle & c)
 {
     // no collision from behind (motion in same direction as normal)
     
+    if(m == coord()) return 0;
+    
     double velocity = magnitude(m);
-    if(velocity == 0) return 0;
     
     coord d = m/velocity;
     
-    if(dot(d, c.normal) > 0)
+    if(dot(d, c.normal) >= 0)
         return INF;
     
     coord e1 = c.points[1]-c.points[0];
@@ -340,149 +463,55 @@ double ray_cast_triangle(const coord & o, const coord & m, const collision & c)
     return dot(e2, qvec) / det;
 }
 
-void triangle_castlines_triangle(const collision & r, const coord & d, const collision & c, double & d1, collision & contact_collision, const double & minimum, const double & maximum)
-{
-    d1 = INF;
+
+struct collisionstew {
+    static constexpr int dimensions = 1024*16;
     
-    //if(normalized_dot(d, c.normal) > 0 or normalized_dot(d, r.normal) < 0) return;
-    if(normalized_dot(d, c.normal) > 0 or normalized_dot(d, r.normal) < 0) return;
-    //if(normalized_dot(r.normal, c.normal) >= 0) return;
-    //if(normalized_dot(d, r.normal) < 0 ) return;
+    std::vector<triholder *> triangles; // relative to x, y, z
+    std::vector<lineholder *> lines; // relative to x, y, z
+    std::vector<coord *> points; // relative to x, y, z
     
-    for(int i = 0; i < 3; i++)
+    triholder * insert(const triholder & value)
     {
-        const coord r1 = r.points[i];
-        const coord r2 = r.points[(i+1)%3];
-        const coord ro = r2-r1;
-        for(int j = 0; j < 3; j++)
-        {
-            const coord c1 = c.points[j];
-            const coord c2 = c.points[(j+1)%3];
-            const coord c3 = c2+ro;
-            const coord c4 = c1+ro;
-            
-            collision tri1 = collision(c1, c2, c3);
-            collision tri2 = collision(c1, c4, c3);
-            
-            if(normalized_dot(d, tri1.normal) > 0)
-                tri1 = collision(c1, c3, c2);
-            if(normalized_dot(d, tri2.normal) > 0)
-                tri2 = collision(c1, c3, c4);
-            
-            const double d2 = ray_cast_triangle(r2, d, tri1);
-            const double d3 = ray_cast_triangle(r2, d, tri2);
-            
-            if(d2 < d1 and d2 >= minimum and d2 <= maximum)
-            {
-                d1 = d2;
-                contact_collision = tri1;
-                contact_collision.isstatic = c.isstatic;
-                //contact_plane.normal = tri1.normal;
-                //contact_plane.isstatic = c.isstatic;
-            }
-            else if(d3 < d1 and d3 >= minimum and d3 <= maximum)
-            {
-                d1 = d3;
-                contact_collision = tri2;
-                contact_collision.isstatic = c.isstatic;
-                //contact_plane.normal = tri2.normal;
-                //contact_plane.isstatic = c.isstatic;
-            }
-        }
+        triholder * heap = new triholder;
+        *heap = value;
+        triangles.push_back(heap);
+        return heap;
     }
-}
+    lineholder * insert(const lineholder & value)
+    {
+        lineholder * heap = new lineholder;
+        *heap = value;
+        lines.push_back(heap);
+        return heap;
+    }
+    coord * insert(const coord & value)
+    {
+        coord * heap = new coord;
+        *heap = value;
+        points.push_back(heap);
+        return heap;
+    }
+};
+
 
 struct rigidbody {
     double x, y, z;
     double xspeed, yspeed, zspeed;
     coord minima; // AABB stuff
     coord maxima; // AABB stuff
-    std::vector<collision> triangles; // relative to x, y, z
-    std::vector<coord> points; // relative to x, y, z
+    
+    collisionstew collision;
 };
 
-collision zero_collision = collision();
-
-void rigidbody_cast_triangle(const rigidbody & body, const coord & position, const coord & d, const collision & c, double & d1, collision & contact_collision, const double & minimum, const double & maximum, bool verbose = false)
-{
-    d1 = INF;
-    
-#if 0
-    double d2 = ray_cast_triangle(position, d, c);
-    if(d2 != INF and d2 >= minimum and d2 <= maximum)
-    {
-        d1 = d2;
-        contact_collision = c;
-    }
-    return;
-#endif
-    int type = 0;
-    double start, end;
-    start = glfwGetTime();
-    for(const auto p : body.points)
-    {
-        const double d2 = ray_cast_triangle(p+position, d, c);
-        if(d2 < d1 and d2 >= minimum and d2 <= maximum)
-        {
-            type = 1;
-            d1 = d2;
-            contact_collision = c;
-            //contact_collision.intersect = center(c);
-            //contact_collision.normal = c.normal;
-            //contact_collision.isstatic = c.isstatic;
-        }
-    }
-    for(const auto p : c.points)
-    {
-        auto p2 = p-position;
-        for(auto tri : body.triangles)
-        {
-            const double d2 = ray_cast_triangle(p2, -d, tri);
-            if(d2 < d1 and d2 >= minimum and d2 <= maximum)
-            {
-                type = 2;
-                d1 = d2;
-                contact_collision = tri;
-                contact_collision.normal = -tri.normal;
-                //contact_collision.intersect = center(c);
-                //contact_collision.normal = -tri.normal;
-                //contact_collision.isstatic = c.isstatic;
-            }
-        }
-    }
-    end = glfwGetTime();
-    time_spent_triangle += end-start;
-    start = glfwGetTime();
-    for(const auto tri : body.triangles)
-    {
-        double d2;
-        collision new_collision;
-        triangle_castlines_triangle(tri+position, d, c, d2, new_collision, minimum, maximum);
-        if(d2 < d1 and d2 >= minimum and d2 <= maximum)
-        {
-            type = 3;
-            d1 = d2;
-            contact_collision = new_collision;
-        }
-    }
-    end = glfwGetTime();
-    time_spent_line += end-start;
-    
-    if(false and debughard)
-    {
-        if(type == 0) puts("TYPE Z");
-        if(type == 1) puts("TYPE A");
-        if(type == 2) puts("TYPE B");
-        if(type == 3) puts("TYPE C");
-    }
-}
+triangle zero_triangle = triangle();
 
 void checkerr(int line)
 {
     GLenum err;
     while((err = glGetError()) != GL_NO_ERROR)
     {
-        printf("GL error %04X from line %d\n", err, line);
+        //printf("GL error %04X from line %d\n", err, line);
     }   
 }
 
@@ -1939,7 +1968,7 @@ struct octnode {
     octnode(unsigned level, octnode * parent, int index);
     void allocate_nodes(unsigned level);
     bool contact(const coord & minima, const coord & maxima) const;
-    void add(T * a);
+    void add(T * a, const coord & minima, const coord & maxima);
     void potentials(const coord & minima, const coord & maxima, std::set<T *> & ret) const;
 };
 
@@ -1967,8 +1996,8 @@ octnode<T>::octnode(const coord & minima, const coord & maxima)
     this->minima = minima;
     this->maxima = maxima;
     
-    printf("Building octree of %d bottom-level nodes (%dx%d)\n", (int)ipow(8, depth), (int)ipow(2, depth), (int)ipow(2, depth));
-    printf("(%d total nodes)\n", ((int)ipow(4, depth+1)-1)/3);
+    printf("Building octree of %d bottom-level nodes (%dx%dx%d)\n", (int)ipow(8, depth), (int)ipow(2, depth), (int)ipow(2, depth), (int)ipow(2, depth));
+    printf("(%d total nodes)\n", ((int)ipow(8, depth+1)-1)/7);
     
     allocate_nodes(depth);
 }
@@ -2028,14 +2057,14 @@ bool octnode<T>::contact(const coord & minima, const coord & maxima) const
     return aabb_overlap(minima, maxima, this->minima, this->maxima);
 }
 template <typename T>
-void octnode<T>::add(T * a)
+void octnode<T>::add(T * a, const coord & minima, const coord & maxima)
 {
-    if(contact(a->minima, a->maxima))
+    if(contact(minima, maxima))
     {
         tags.insert(a);
         if(nodes)
             for(auto & e : *nodes)
-                e->add(a);
+                e->add(a, minima, maxima);
     }
     else if(isroot)
         outertags.insert(a);
@@ -2051,18 +2080,71 @@ void dummy_union(std::set<T> & a, const std::set<T> & b)
 }
 
 // returns a sorted list of potential overlaps
-template <typename T>
-void octnode<T>::potentials(const coord & minima, const coord & maxima, std::set<T *> & ret) const
+template <>
+void octnode<coord>::potentials(const coord & minima, const coord & maxima, std::set<coord *> & ret) const
 {
+    #if 0
+    dummy_union(ret, outertags);
+    dummy_union(ret, tags);
+    return;
+    #endif
     // include alien objects if we're the root node and the object looking for stuff is not entirely inside us
     if(isroot and !aabb_contained(minima, maxima, this->minima, this->maxima))
-        dummy_union(ret, outertags);
+    {
+        for(const auto & e : outertags)
+        {
+            if(aabb_overlap(*e, *e, minima, maxima))
+                ret.insert(e);
+        }
+    }
     // check if we're overlapping, then ask our child nodes, or insert if we're the last child
     if(contact(minima, maxima))
     {
         // pretend to be a child node if the object completely encompasses us
         if(nodes == nullptr or aabb_contained(this->minima, this->maxima, minima, maxima))
-            dummy_union(ret, tags);
+        {
+            for(const auto & e : tags)
+            {
+                if(aabb_overlap(*e, *e, minima, maxima))
+                    ret.insert(e);
+            }
+        }
+        else
+            for(auto & e : *nodes)
+                e->potentials(minima, maxima, ret);
+    }
+}
+
+// returns a sorted list of potential overlaps
+template <typename T>
+void octnode<T>::potentials(const coord & minima, const coord & maxima, std::set<T *> & ret) const
+{
+    #if 0
+    dummy_union(ret, outertags);
+    dummy_union(ret, tags);
+    return;
+    #endif
+    // include alien objects if we're the root node and the object looking for stuff is not entirely inside us
+    if(isroot and !aabb_contained(minima, maxima, this->minima, this->maxima))
+    {
+        for(const auto & e : outertags)
+        {
+            if(aabb_overlap(e->minima, e->maxima, minima, maxima))
+                ret.insert(e);
+        }
+    }
+    // check if we're overlapping, then ask our child nodes, or insert if we're the last child
+    if(contact(minima, maxima))
+    {
+        // pretend to be a child node if the object completely encompasses us
+        if(nodes == nullptr or aabb_contained(this->minima, this->maxima, minima, maxima))
+        {
+            for(const auto & e : tags)
+            {
+                if(aabb_overlap(e->minima, e->maxima, minima, maxima))
+                    ret.insert(e);
+            }
+        }
         else
             for(auto & e : *nodes)
                 e->potentials(minima, maxima, ret);
@@ -2072,36 +2154,215 @@ void octnode<T>::potentials(const coord & minima, const coord & maxima, std::set
 
 struct worldstew {
     static constexpr int dimensions = 1024*16;
-    octnode<collision> * tree = new octnode<collision>(coord(-dimensions, -dimensions, -dimensions), coord(dimensions, dimensions, dimensions));
-    collision * insert(const collision & value)
+    octnode<triholder> * tri_tree = new octnode<triholder>(coord(-dimensions, -dimensions, -dimensions), coord(dimensions, dimensions, dimensions));
+    octnode<lineholder> * line_tree = new octnode<lineholder>(coord(-dimensions, -dimensions, -dimensions), coord(dimensions, dimensions, dimensions));
+    octnode<coord> * point_tree = new octnode<coord>(coord(-dimensions, -dimensions, -dimensions), coord(dimensions, dimensions, dimensions));
+    triholder * insert(const triholder & value)
     {
-        collision * heap = new collision;
+        triholder * heap = new triholder;
         *heap = value;
-        tree->add(heap);
+        tri_tree->add(heap, heap->minima, heap->maxima);
         return heap;
     }
-    void push_back(const collision & value)
+    lineholder * insert(const lineholder & value)
     {
-        insert(value);
+        lineholder * heap = new lineholder;
+        *heap = value;
+        line_tree->add(heap, heap->minima, heap->maxima);
+        return heap;
     }
-    void update(collision * heap)
+    coord * insert(const coord & value)
     {
-        // TODO (make part of octree instead?)
+        coord * heap = new coord;
+        *heap = value;
+        point_tree->add(heap, value, value);
+        return heap;
     }
-    void remove(collision * heap)
+    std::set<triholder *> broadphase_tri(const coord & minima, const coord & maxima) const
     {
-        // TODO (make part of octree instead?)
+        std::set<triholder *> ret;
+        tri_tree->potentials(minima, maxima, ret);
+        return ret;
     }
-    std::set<collision *> broadphase(const coord & minima, const coord & maxima) const
+    std::set<lineholder *> broadphase_line(const coord & minima, const coord & maxima) const
     {
-        std::set<collision *> ret;
-        tree->potentials(minima, maxima, ret);
+        std::set<lineholder *> ret;
+        line_tree->potentials(minima, maxima, ret);
+        return ret;
+    }
+    std::set<coord *> broadphase_point(const coord & minima, const coord & maxima) const
+    {
+        std::set<coord *> ret;
+        point_tree->potentials(minima, maxima, ret);
         return ret;
     }
 };
 
 worldstew world;
 
+inline void lines_cast_lines(const std::vector<lineholder *> & holder, const coord & position, const coord & motion,
+                             const coord & minima, const coord & maxima,
+                             const std::set<lineholder *> & holder2,
+                             double & d1, triangle & contact_collision,
+                             const double & minimum, const double & maximum)
+{
+    d1 = INF;
+    
+    for(const auto & c : holder2)
+    {
+        if(!aabb_overlap(minima, maxima, c->minima, c->maxima))
+            continue;
+        
+        if(dot(motion, c->lin.normal1) > 0 and dot(motion, c->lin.normal2) > 0) continue;
+        
+        for(const auto & r : holder)
+        {
+            // line only belongs to back faces
+            if(dot(motion, r->lin.normal1) < 0 and dot(motion, r->lin.normal2) < 0) continue;
+
+            const coord r2 = r->lin.points[1]+position;
+            
+            const coord ro = r->lin.points[1]-r->lin.points[0];
+            
+            // line only belongs to back faces
+            
+            const coord c1 = c->lin.points[0];
+            const coord c2 = c->lin.points[1];
+            const coord c3 = c2+ro;
+            const coord c4 = c1+ro;
+            
+            const triangle tri1a = triangle(c1, c2, c3);
+            const triangle tri2a = triangle(c1, c4, c3, tri1a.normal);
+            
+            const bool forwards = (dot(motion, tri1a.normal) <= 0);
+            
+            const triangle tri1 = forwards?tri1a:triangle(c1, c3, c2, -tri1a.normal);
+            const triangle tri2 = forwards?tri2a:triangle(c1, c3, c4, -tri1a.normal);
+            
+            const double d2 = ray_cast_triangle(r2, motion, tri1);
+            const double d3 = ray_cast_triangle(r2, motion, tri2);
+            
+            if(d2 < d1 and d2 >= minimum and d2 <= maximum)
+            {
+                d1 = d2;
+                contact_collision = tri1;
+            }
+            if(d3 < d1 and d3 >= minimum and d3 <= maximum)
+            {
+                d1 = d3;
+                contact_collision = tri2;
+            }
+        }
+    }
+}
+
+void rigidbody_cast_world(const collisionstew & body, const coord & position, const coord & motion,
+                          const coord & minima, const coord & maxima,
+                          const std::set<triholder *>&  tris, const std::set<lineholder *> & lines, const std::set<coord *> & points,
+                          double & d1, triangle & contact_collision,
+                          const double & minimum, const double & maximum, bool verbose = false)
+{
+    d1 = INF;
+    
+    #if 0
+    for(const auto & c : tris)
+    {
+        double d2 = ray_cast_triangle(position, motion, c->tri);
+        if(d2 < d1 and d2 >= minimum and d2 <= maximum)
+        {
+            d1 = d2;
+            contact_collision = c->tri;
+        }
+    }
+    return;
+    #else
+    int type = 0;
+    
+    double start, end;
+    start = glfwGetTime();
+    for(const auto & c : tris)
+    {
+        if(!aabb_overlap(minima, maxima, c->minima, c->maxima))
+            continue;
+        for(const auto & p : body.points)
+        {
+            coord point = *p+position;
+            const double d2 = ray_cast_triangle(point, motion, c->tri);
+            if(d2 < d1 and d2 >= minimum and d2 <= maximum)
+            {
+                type = 1;
+                d1 = d2;
+                contact_collision = c->tri;
+            }
+        }
+    }
+    
+    for(const auto & p : points)
+    {
+        if(!aabb_overlap(minima, maxima, *p, *p))
+            continue;
+        for(const auto & c : body.triangles)
+        {
+            triangle mytri = c->tri+position;
+            const double d2 = ray_cast_triangle(*p, -motion, mytri);
+            if(d2 < d1 and d2 >= minimum and d2 <= maximum)
+            {
+                type = 2;
+                d1 = d2;
+                contact_collision = mytri + (normalize(motion)*d2);
+                contact_collision.points = {contact_collision.points[0], contact_collision.points[2], contact_collision.points[1]};
+                contact_collision.normal = -mytri.normal;
+            }
+        }
+    }
+    end = glfwGetTime();
+    time_spent_triangle += end-start;
+    
+    
+    start = glfwGetTime();
+    double d2;
+    triangle new_collision;
+    lines_cast_lines(body.lines, position, motion, minima, maxima, lines, d2, new_collision, minimum, maximum);
+    if(d2 < d1 and d2 >= minimum and d2 <= maximum)
+    {
+        type = 3;
+        d1 = d2;
+        contact_collision = new_collision;
+    }
+    end = glfwGetTime();
+    time_spent_line += end-start;
+    
+    
+    if(verbose and debughard)
+    {
+        if(type == 0) puts("TYPE Z");
+        if(type == 1) puts("TYPE A");
+        if(type == 2) puts("TYPE B");
+        if(type == 3) puts("TYPE C");
+    }
+    #endif
+}
+
+// The triangle we're colliding with will either be a world triangle, an moved and inverted body triangle, or a triangle derived from two edges. Point collisions will work for all of them.
+void rigidbody_cast_virtual_triangle(const collisionstew & body, const coord & position, const coord & motion,
+                             const triangle tri,
+                             double & d1, triangle & contact_collision,
+                             const double & minimum, const double & maximum, bool verbose = false)
+{
+    d1 = INF;
+    for(const auto & p : body.points)
+    //const coord point = position;
+    {
+        coord point = *p+position;
+        
+        const double d2 = ray_cast_triangle(point, motion, tri);
+        if(d2 < d1 and d2 >= minimum and d2 <= maximum)
+        {
+            d1 = d2;
+            contact_collision = tri;
+        }
+    }
+}
 
 const static int terrainsize = 64; // dimensions of terrain
 const static int terrainscale = 64; // scale of each quad in terrain
@@ -2194,6 +2455,7 @@ void generate_terrain()
         terrainindexes[i++] = 65535;
     }
     
+    // insert triangles and diagonal lines
     for(int y = 0; y < terrainsize-1; y++)
     {
         for(int x = 0; x < terrainsize-1; x++)
@@ -2202,20 +2464,137 @@ void generate_terrain()
             auto rb = terrain[x  +(y+1)*terrainsize];
             auto rc = terrain[x+1+(y  )*terrainsize];
             auto rd = terrain[x+1+(y+1)*terrainsize];
-            
-            auto t1 = collision(ra, rb, rc);
-            auto t2 = collision(rc, rb, rd);
+            // a---c
+            // |  /|
+            // | / |
+            // |/  |
+            // b---d
+            auto t1 = triholder(ra, rb, rc);
+            auto t2 = triholder(rc, rb, rd);
             
             world.insert(t1);
             world.insert(t2);
+            
+            auto myline = lineholder(rb, rc, t1.tri.normal, t2.tri.normal);
+            
+            world.insert(myline);
+            
+        }
+    }
+    // insert vertical lines
+    for(int y = 0; y < terrainsize-1; y++)
+    {
+        for(int x = 0; x < terrainsize; x++)
+        {
+            auto ra = terrain[x  +(y  )*terrainsize];
+            auto rb = terrain[x  +(y+1)*terrainsize];
+            
+            std::vector<coord> normals;
+            normals.reserve(2);
+            
+            //     a---c
+            //    /|  /
+            //   / | /
+            //  /  |/
+            // d---b
+            if(x > 0)
+            {
+                auto rd = terrain[x-1+(y+1)*terrainsize];
+                auto tri = triangle(ra, rd, rb); // correspond to c, b, d in the triangle loop
+                normals.push_back(tri.normal);
+            }
+            if(x < terrainsize-1)
+            {
+                auto rc = terrain[x+1+(y  )*terrainsize];
+                auto tri = triangle(ra, rb, rc);
+                normals.push_back(tri.normal);
+            }
+            
+            coord n1;
+            coord n2;
+            if(normals.size() == 1)
+            {
+                n1 = normals[0];
+                n2 = normals[0];
+            }
+            else
+            {
+                n1 = normals[0];
+                n2 = normals[1];
+            }
+            
+            auto myline = lineholder(ra, rb, n1, n2);
+            
+            world.insert(myline);
+        }
+    }
+    // insert horizontal lines
+    for(int y = 0; y < terrainsize; y++)
+    {
+        for(int x = 0; x < terrainsize-1; x++)
+        {
+            auto ra = terrain[x  +(y  )*terrainsize];
+            auto rb = terrain[x+1+(y  )*terrainsize];
+            
+            std::vector<coord> normals;
+            normals.reserve(2);
+            
+            //     d
+            //    /|
+            //   / |
+            //  /  |
+            // a---b
+            // |  /
+            // | /
+            // |/
+            // c
+            if(y > 0)
+            {
+                auto rc = terrain[x  +(y+1)*terrainsize];
+                auto tri = triangle(ra, rc, rb);
+                normals.push_back(tri.normal);
+            }
+            if(y < terrainsize-1)
+            {
+                auto rd = terrain[x+1+(y-1)*terrainsize];
+                auto tri = triangle(rd, ra, rb);
+                normals.push_back(tri.normal);
+            }
+            
+            coord n1;
+            coord n2;
+            if(normals.size() == 1)
+            {
+                n1 = normals[0];
+                n2 = normals[0];
+            }
+            else
+            {
+                n1 = normals[0];
+                n2 = normals[1];
+            }
+            
+            auto myline = lineholder(ra, rb, n1, n2);
+            
+            world.insert(myline);
+        }
+    }
+    // insert points
+    for(int y = 0; y < terrainsize; y++)
+    {
+        for(int x = 0; x < terrainsize; x++)
+        {
+            auto ra = terrain[x  +(y  )*terrainsize];
+            
+            world.insert(ra);
         }
     }
 }
 
 struct collider {
     rigidbody body;
-    collision contact_collision = zero_collision;
-    std::vector<collision> touching;
+    triangle contact_collision = triangle();
+    std::vector<triangle> touching;
     bool collided = false;
 };
 
@@ -2231,46 +2610,8 @@ struct box {
 std::vector<projectile *> shots;
 std::vector<box *> boxes;
 
-void insert_box_collisions(double x, double y, double z, double s, std::vector<collision> & triangles, bool makestatic, double yangle = 0)
-{
-    double xunit = 1;//sin(yangle)*s;
-    double zunit = 1;//cos(yangle)*s;
-    // top
-    triangles.push_back(collision(coord(x-xunit, y-s, z-zunit), coord(x+xunit, y-s, z-zunit), coord(x-xunit, y-s, z+zunit), false, makestatic));
-    triangles.push_back(collision(coord(x+xunit, y-s, z-zunit), coord(x-xunit, y-s, z+zunit), coord(x+xunit, y-s, z+zunit), true,  makestatic));
-    // bottom
-    triangles.push_back(collision(coord(x+xunit, y+s, z-zunit), coord(x-xunit, y+s, z-zunit), coord(x+xunit, y+s, z+zunit), false, makestatic));
-    triangles.push_back(collision(coord(x-xunit, y+s, z-zunit), coord(x+xunit, y+s, z+zunit), coord(x-xunit, y+s, z+zunit), true,  makestatic));
-    // left
-    triangles.push_back(collision(coord(x-xunit, y+s, z-zunit), coord(x-xunit, y-s, z-zunit), coord(x-xunit, y+s, z+zunit), false, makestatic));
-    triangles.push_back(collision(coord(x-xunit, y-s, z-zunit), coord(x-xunit, y+s, z+zunit), coord(x-xunit, y-s, z+zunit), true,  makestatic));
-    // right
-    triangles.push_back(collision(coord(x+xunit, y-s, z-zunit), coord(x+xunit, y+s, z-zunit), coord(x+xunit, y-s, z+zunit), false, makestatic));
-    triangles.push_back(collision(coord(x+xunit, y+s, z-zunit), coord(x+xunit, y-s, z+zunit), coord(x+xunit, y+s, z+zunit), true,  makestatic));
-    // out-from-screen
-    triangles.push_back(collision(coord(x+xunit, y-s, z-zunit), coord(x-xunit, y-s, z-zunit), coord(x+xunit, y+s, z-zunit), false, makestatic));
-    triangles.push_back(collision(coord(x-xunit, y-s, z-zunit), coord(x+xunit, y+s, z-zunit), coord(x-xunit, y+s, z-zunit), true,  makestatic));
-    // into-screen
-    triangles.push_back(collision(coord(x-xunit, y-s, z+zunit), coord(x+xunit, y-s, z+zunit), coord(x-xunit, y+s, z+zunit), false, makestatic));
-    triangles.push_back(collision(coord(x+xunit, y-s, z+zunit), coord(x-xunit, y+s, z+zunit), coord(x+xunit, y+s, z+zunit), true,  makestatic));
-}
-
-void insert_box_points(double x, double y, double z, double s, std::vector<coord> & points, bool makestatic, double yangle = 0)
-{
-    double xunit = 1;//sin(yangle)*s;
-    double zunit = 1;//cos(yangle)*s;
-    points.push_back(coord(x-xunit, y-s, z-zunit));
-    points.push_back(coord(x+xunit, y-s, z-zunit));
-    points.push_back(coord(x-xunit, y-s, z+zunit));
-    points.push_back(coord(x+xunit, y-s, z+zunit));
-    points.push_back(coord(x-xunit, y+s, z-zunit));
-    points.push_back(coord(x+xunit, y+s, z-zunit));
-    points.push_back(coord(x-xunit, y+s, z+zunit));
-    points.push_back(coord(x+xunit, y+s, z+zunit));
-}
-
 template <typename T>
-void insert_prism_oct_body(double x, double y, double z, double radius, double top, double bottom, T & trianglestew, std::vector<coord> & points, bool makestatic)
+void insert_prism_oct_body(double x, double y, double z, double radius, double top, double bottom, T & collisionstew)
 {
     coord mypoints[16];
     int n = 0;
@@ -2283,22 +2624,47 @@ void insert_prism_oct_body(double x, double y, double z, double radius, double t
         mypoints[n++] = coord(rightwards+x, top+y, forwards+z);
         mypoints[n++] = coord(rightwards+x, bottom+y, forwards+z);
     }
+    
+    // insert triangles
+    
+    // sides strip
     for(int i = 0; i < 16; i++)
-        trianglestew.push_back(collision(mypoints[i], mypoints[(i+1)%16], mypoints[(i+2)%16], !(i&1), makestatic));
+        collisionstew.insert(triholder(mypoints[i], mypoints[(i+1)%16], mypoints[(i+2)%16], !(i&1)));
+    // top(?) fan
     coord start = mypoints[0];
     for(int i = 1; i < 8-1; i++)
-        trianglestew.push_back(collision(start, mypoints[(i*2)%16], mypoints[((i+1)*2)%16], true, makestatic));
+        collisionstew.insert(triholder(start, mypoints[(i*2)%16], mypoints[((i+1)*2)%16], true));
+    // bottom(?) fan
     start = mypoints[1];
     for(int i = 1; i < 8-1; i++)
-        trianglestew.push_back(collision(start, mypoints[((i*2)+1)%16], mypoints[((i+1)*2+1)%16], false, makestatic));
+        collisionstew.insert(triholder(start, mypoints[((i*2)+1)%16], mypoints[((i+1)*2+1)%16], false));
+    
+    // insert lines
+    
+    for(int i = 0; i < 16; i+=2)
+    {
+        // sides are flat so this doesn't change anything
+        auto prenormal = triangle(mypoints[(i-1+16)%16], mypoints[i], mypoints[i+1]).normal;
+        auto postnormal = triangle(mypoints[i+1], mypoints[i], mypoints[(i+2)%16]).normal; // inverted
+        
+        //vertical
+        collisionstew.insert(lineholder(mypoints[i], mypoints[i+1], prenormal, postnormal));
+        // horizontal top
+        collisionstew.insert(lineholder(mypoints[i], mypoints[(i+2)%16], postnormal, coord(0,-1,0)));
+        // horizontal bottom
+        // not made from the same vertices but the triangle they would make has the same normal
+        collisionstew.insert(lineholder(mypoints[(i+1)%16], mypoints[(i+3)%16], postnormal, coord(0,1,0)));
+    }
+    
+    // insert points
     
     for(int i = 0; i < 16; i++)
-        points.push_back(mypoints[i]);
+        collisionstew.insert(mypoints[i]);
         
 }
 
 template <typename T>
-void insert_box_body(double x, double y, double z, double diameter, double top, double bottom, T & trianglestew, std::vector<coord> & points, bool makestatic, double yangle = 0)
+void insert_box_body(double x, double y, double z, double diameter, double top, double bottom, T & collisionstew, double yangle = 0)
 {
     double radius = diameter*sqrt(2);
     coord mypoints[8];
@@ -2312,17 +2678,42 @@ void insert_box_body(double x, double y, double z, double diameter, double top, 
         mypoints[n++] = coord(rightwards+x, top+y, forwards+z);
         mypoints[n++] = coord(rightwards+x, bottom+y, forwards+z);
     }
+    
+    // insert triangles
+    
+    // sides strip
     for(int i = 0; i < 8; i++)
-        trianglestew.push_back(collision(mypoints[i], mypoints[(i+1)%8], mypoints[(i+2)%8], !(i&1), makestatic));
+        collisionstew.insert(triholder(mypoints[i], mypoints[(i+1)%8], mypoints[(i+2)%8], !(i&1)));
+    // top(?) fan
     coord start = mypoints[0];
     for(int i = 1; i < 4-1; i++)
-        trianglestew.push_back(collision(start, mypoints[(i*2)%8], mypoints[((i+1)*2)%8], true, makestatic));
+        collisionstew.insert(triholder(start, mypoints[(i*2)%8], mypoints[((i+1)*2)%8], true));
+    // bottom(?) fan
     start = mypoints[1];
     for(int i = 1; i < 4-1; i++)
-        trianglestew.push_back(collision(start, mypoints[((i*2)+1)%8], mypoints[((i+1)*2+1)%8], false, makestatic));
+        collisionstew.insert(triholder(start, mypoints[((i*2)+1)%8], mypoints[((i+1)*2+1)%8], false));
+    
+    // insert lines
+    
+    for(int i = 0; i < 8; i+=2)
+    {
+        // sides are flat so this doesn't change anything
+        auto prenormal = triangle(mypoints[(i-1+8)%8], mypoints[i], mypoints[i+1]).normal;
+        auto postnormal = triangle(mypoints[i+1], mypoints[i], mypoints[(i+2)%8]).normal; // inverted
+        
+        //vertical
+        collisionstew.insert(lineholder(mypoints[i], mypoints[i+1], prenormal, postnormal));
+        // horizontal top
+        collisionstew.insert(lineholder(mypoints[i], mypoints[(i+2)%8], postnormal, coord(0,-1,0)));
+        // horizontal bottom
+        // not made from the same vertices but the triangle they would make has the same normal
+        collisionstew.insert(lineholder(mypoints[(i+1)%8], mypoints[(i+3)%8], postnormal, coord(0,1,0)));
+    }
+    
+    // insert points
     
     for(int i = 0; i < 8; i++)
-        points.push_back(mypoints[i]);
+        collisionstew.insert(mypoints[i]);
         
 }
 
@@ -2330,23 +2721,18 @@ void add_box(double x, double y, double z, double size, double yangle = 0)
 {
     boxes.push_back(new box({x, y, z, size, yangle}));
     
-    std::vector<coord> dump;
-    insert_box_body(x, y, z, size/2, -size/2, size/2, world, dump, true, yangle);
-    //insert_box_collisions(x, y, z, size/2, worldtriangles, true);
+    insert_box_body(x, y, z, size/2, -size/2, size/2, world, yangle);
 }
 
 double shotsize = 8;
 
-constexpr double safety = 0.0001;
+constexpr double safety = 0.01;
 //constexpr double safety_bounce = 0;
 constexpr double friction_gap = 1;
 
 
-void body_find_contact(const rigidbody & b, const worldstew & world, const coord & motion, const double & speed, collision & goodcollision, double & gooddistance)
+void body_find_contact(const rigidbody & b, const worldstew & world, const coord & motion, const double & speed, triangle & goodcollision, double & gooddistance)
 {
-    gooddistance = INF;
-    goodcollision = zero_collision;
-    
     const coord position = coord(b.x, b.y, b.z);
     const coord unit = coord(1,1,1);
     auto minima = make_minima(b.minima, b.minima+motion)+position-unit;
@@ -2355,40 +2741,32 @@ void body_find_contact(const rigidbody & b, const worldstew & world, const coord
     double start, end;
     
     start = glfwGetTime();
-    auto worldset = world.broadphase(minima, maxima);
+    const auto world_tris = world.broadphase_tri(minima, maxima);
+    const auto world_lines = world.broadphase_line(minima, maxima);
+    const auto world_points = world.broadphase_point(minima, maxima);
     end = glfwGetTime();
     time_spent_broadphase += end-start;
     
     // select closest collidable triangle
     start = glfwGetTime();
-    for(const auto & c : worldset)
+    
+    rigidbody_cast_world(b.collision, position, motion, minima, maxima, world_tris, world_lines, world_points, gooddistance, goodcollision, 0, speed, true);
+    
+    if(goodcollision != zero_triangle)
     {
-        const collision & p = *c;
-        if(!aabb_overlap(minima, maxima, p.minima, p.maxima))
-            continue;
-        
-        collision contact_collision = zero_collision;
-        double dist;
-        
-        rigidbody_cast_triangle(b, position, motion, p, dist, contact_collision, 0, speed, true);
-        if(contact_collision != zero_collision)
+        double dottie = -dot(normalize(motion), goodcollision.normal);
+        if(dottie <= 0)
         {
-            double dottie = -normalized_dot(motion, contact_collision.normal);
-            if(dottie < 0)
-                continue;
-            
-            double pseudo_safety = safety;///dottie;
-            
-            if(pseudo_safety > 10) printf("huge safety %f\n", pseudo_safety);
-            
-            dist -= pseudo_safety; // This can us to eject into other geometry in very artificial situations. Make sure all your bodies are larger than safety*2 in every dimensino.
-            if(dist < gooddistance and dist < speed)
-            {
-                goodcollision = contact_collision;
-                gooddistance = dist;
-            }
+            puts("bad dot in finding contact");
+            printf("%.80f\n", dottie);
+            printf("%f %f %f\n", motion.x, motion.y, motion.z);
+            printf("%f %f %f\n", goodcollision.normal.x, goodcollision.normal.y, goodcollision.normal.z);
+            exit(0);
         }
+        gooddistance -= safety; // This can us to eject into other geometry in very artificial situations. Make sure all your bodies are larger than safety*2 in every dimension.
+        gooddistance = max(0, gooddistance);
     }
+    
     end = glfwGetTime();
     time_spent_searching += end-start;
 }
@@ -2398,21 +2776,19 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
             
     rigidbody & b = c.body;
     
-    collision & last_collision = c.contact_collision;
+    triangle & last_collision = c.contact_collision;
     
     //puts("frame boundary ---------------");
     
-    //std::vector<collision> & touching = c.touching;
-    
+    //std::vector<triangle> & touching = c.touching;
     //touching = {};
-    std::vector<collision> touching;
+    std::vector<triangle> touching;
     touching.reserve(3);
     
     double time = delta;
     
     bool hit_anything_at_all = false;
     int baditers = 0;
-    int reallybaditers = 0;
     bool refusedtohit = false;
     int iters = 0;
     while(time > 0)
@@ -2429,11 +2805,12 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
         
         if(motion == coord())
         {
+            if(false)if(debughard) puts("still, breaking");
             time = 0;
             continue;
         }
         
-        collision goodcollision = zero_collision;
+        triangle goodcollision = zero_triangle;
         double gooddistance = INF;
         
         body_find_contact(b, world, motion*time, speed, goodcollision, gooddistance);
@@ -2443,25 +2820,26 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
         if(gooddistance != INF)
         {
             refusedtohit = false;
-            if(gooddistance >= -safety and gooddistance <= safety) reallybaditers++;
             
             auto p = goodcollision;
             
             double airtime = gooddistance/speed*time;
             
             double newtime = time - abs(airtime);
-                
-            bool already_touching = false;
+            
             for(unsigned int j = 0; j < touching.size(); j++)
             {
-                if(touching[j] == p) touching.erase(touching.begin()+(j--));
+                if(touching[j] == p)
+                {
+                    if(debughard) puts("erasing self");
+                    touching.erase(touching.begin()+(j--));
+                }
                 else
                 {
-                    collision contact_collision = zero_collision;
-                    double dist;
+                    triangle contact_collision = zero_triangle;
+                    double dist = INF;
                     if(debughard) puts("erasure test");
-                    rigidbody_cast_triangle(b, coord(b.x, b.y, b.z), -touching[j].normal, touching[j], dist, contact_collision, -safety*3, safety*3);
-                    //rigidbody_cast_triangle(b, , -touching[j].normal, touching[j], dist, contact_collision);
+                    rigidbody_cast_virtual_triangle(b.collision, coord(b.x, b.y, b.z), -touching[j].normal, touching[j], dist, contact_collision, -safety*3, safety*3);
                     if(dist == INF)
                     {
                         if(debughard) puts("erasing inside");
@@ -2482,16 +2860,15 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
             touching.push_back(p);
             
             // FIXME: handle seams
-            if(last_collision != zero_collision)
+            if(last_collision != zero_triangle)
             {
                 auto contact_direction = last_collision.normal;
                 
-                //if(false)//rigidbody_cast_triangle(b, contact_direction, last_triangle) < friction_gap*friction_gap)
                 {
                     double speed = magnitude(motion);
                     if(speed != 0)
                     {
-                        double normalforce = -normalized_dot(contact_direction, coord(0, 1, 0));
+                        double normalforce = -dot(contact_direction, coord(0, 1, 0));
                         if(normalforce < 0) normalforce = 0;
                         double half_newspeed = speed-friction*abs(airtime)*normalforce;
                         if(half_newspeed < 0) half_newspeed = 0;
@@ -2513,7 +2890,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
             
             if(touching.size() == 1)
             {
-                //if(debughard) puts("hit");
+                if(debughard) puts("hit");
                 //if(debughard) printf("distance %0.8f\n", gooddistance);
                 //if(debughard) printf("early  (%0.8f, %0.8f, %0.8f)\n", motion.x, motion.y, motion.z);
                 //auto dot1 = dot(motion, p.normal);
@@ -2527,7 +2904,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
             {
                 auto previous = touching[0];
                 auto current = touching[1];
-                auto mydot = normalized_dot(current.normal, previous.normal);
+                auto mydot = dot(current.normal, previous.normal);
                 if(mydot <= fudge_space)
                 {
                     if(debughard) puts("seam");
@@ -2547,8 +2924,8 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 auto previous_b = touching[1];
                 auto current = touching[2];
                 
-                auto dot_a = normalized_dot(current.normal, previous_a.normal);
-                auto dot_b = normalized_dot(current.normal, previous_b.normal);
+                auto dot_a = dot(current.normal, previous_a.normal);
+                auto dot_b = dot(current.normal, previous_b.normal);
                 
                 // skip off both old surfaces
                 if(dot_a > fudge_space and dot_b > fudge_space)
@@ -2565,18 +2942,25 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                     motion = coord();
                     //break;
                 }
-                else if(dot_a <= fudge_space)
+                // skip into surface B
+                else if(dot_a > fudge_space)
                 {
                     if(debughard) puts("C");
-                    touching = {previous_a, current};
-                    auto seam = cross(current.normal, previous_a.normal);
-                    motion = project(motion, seam);
-                }
-                else if(dot_b <= fudge_space)
-                {
-                    if(debughard) puts("D");
+                    if(debughard) printf("%f %f %f\n", previous_a.normal.x, previous_a.normal.y, previous_a.normal.z);
+                    if(debughard) printf("%f %f %f\n", previous_b.normal.x, previous_b.normal.y, previous_b.normal.z);
+                    if(debughard) printf("%f %f %f\n", current.normal.x, current.normal.y, current.normal.z);
+                    if(debughard) printf("%f %f %f\n", motion.x, motion.y, motion.z);
                     touching = {previous_b, current};
                     auto seam = cross(current.normal, previous_b.normal);
+                    motion = project(motion, seam);
+                    if(debughard) printf("%f %f %f\n", motion.x, motion.y, motion.z);
+                }
+                // skip into surface A
+                else if(dot_b > fudge_space)
+                {
+                    if(debughard) puts("D");
+                    touching = {previous_a, current};
+                    auto seam = cross(current.normal, previous_a.normal);
                     motion = project(motion, seam);
                 }
                 else
@@ -2607,31 +2991,30 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
             else
             {
                 time = newtime;
-                //printf("looping %f\n", time);
-                //printf("speed %f %f %f\n", motion.x, motion.y, motion.z);
+                if(debughard) printf("continuing %f\n", time);
+                if(debughard) printf("speed %f %f %f\n", motion.x, motion.y, motion.z);
             }
         }
         if(!hit_anything_at_all)
         {
-            //puts("!hit anything at all");
-            last_collision = zero_collision;
+            if(debughard) puts("!hit anything at all");
+            last_collision = zero_triangle;
         }
         if(!reached)
         {
             if(time > 0)
             {
                 // FIXME: handle seams
-                if(last_collision != zero_collision)
+                if(last_collision != zero_triangle)
                 {
                     auto contact_direction = normalize(last_collision.normal);
                     auto motion = coord({b.xspeed, b.yspeed, b.zspeed});
                     
-                    //if(false)//rigidbody_cast_triangle(b, contact_direction, last_collision) < friction_gap*friction_gap)
                     {
                         double speed = magnitude(motion);
                         if(speed != 0)
                         {
-                            double normalforce = -normalized_dot(contact_direction, coord(0, 1, 0));
+                            double normalforce = -dot(contact_direction, coord(0, 1, 0));
                             if(normalforce < 0) normalforce = 0;
                             double newspeed = speed-friction*time*normalforce;
                             if(newspeed < 0) newspeed = 0;
@@ -2644,7 +3027,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                         }
                     }
                     //else
-                    //    last_collision = zero_collision;
+                    //    last_collision = zero_triangle;
                 }
             }
             break; // no collisions this iteration
@@ -2657,10 +3040,12 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
     
     if(time > 0 and !refusedtohit)
     {
+        if(debughard) puts("running auto motion");
         b.z += time*b.zspeed;
         b.x += time*b.xspeed;
         b.y += time*b.yspeed;
     }
+    if(debughard) puts("throw over");
 }
 
 double height = 1.75*units_per_meter;
@@ -2732,11 +3117,13 @@ int main (int argc, char ** argv)
     //myself.body.maxima = coord(0, height-offset, 0);
     
     //void insert_prism_oct_body(double x, double y, double z, double radius, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic)
-    insert_prism_oct_body(0, -offset, 0, 0.5*units_per_meter, 0, height, myself.body.triangles, myself.body.points, false);
+    insert_prism_oct_body(0, -offset, 0, 0.5*units_per_meter, 0, height, myself.body.collision);
     //insert_prism_oct_body(0, 0, 0, 32, 0, 32, myself.body.triangles, myself.body.points, false);
-    myself.body.minima = make_minima(myself.body.points);
-    myself.body.maxima = make_maxima(myself.body.points);
+    myself.body.minima = make_minima(myself.body.collision.points);
+    myself.body.maxima = make_maxima(myself.body.collision.points);
     
+    
+    double time_spent_rendering = 0;
     while(!glfwWindowShouldClose(win))
     {
         glfwPollEvents();
@@ -2746,10 +3133,46 @@ int main (int argc, char ** argv)
         double delta;
         
         auto newtime = glfwGetTime();
-        constexpr double throttle = 1.0/60;
-        if((newtime-starttime) < throttle)
+        auto frametime = (newtime-starttime);
+        
+        if(0)
         {
-            std::this_thread::sleep_for(std::chrono::duration<double>(throttle-(newtime-starttime)));
+            printf("Frametime: %.2fms\n"
+            "Possible framerate: %.2f\n"
+            "live projectinoes %d\n"
+            "time spent rendering %.2fms\n"
+            "time spent broadphase %.2fms\n"
+            "time spent searching %.2fms\n"
+            "time spent point-triangle colliding %.2fms\n"
+            "time spent line colliding %.2fms\n"
+            "time spent throwing %.2fms\n"
+            , frametime*1000
+            , 1/frametime
+            , shots.size()
+            , time_spent_rendering*1000
+            , time_spent_broadphase*1000
+            , time_spent_searching*1000
+            , time_spent_triangle*1000
+            , time_spent_line*1000
+            , time_spent_throwing*1000);
+            
+            time_spent_broadphase = 0;
+            time_spent_searching = 0;
+            time_spent_throwing = 0;
+            time_spent_triangle = 0;
+            time_spent_line = 0;
+            
+            double testtime = glfwGetTime();
+            printf("time spent printing time stuff %.2fms\n", (testtime-newtime)*1000);
+        }
+        
+        newtime = glfwGetTime();
+        frametime = (newtime-starttime);
+        
+        constexpr double throttle = 1.0/60;
+        if(frametime < throttle)
+        {
+            std::this_thread::sleep_for(std::chrono::duration<double>(throttle-frametime));
             delta = throttle;
             oldtime = starttime;
             starttime = glfwGetTime();
@@ -2862,15 +3285,15 @@ int main (int argc, char ** argv)
         
         bool slowwalk = glfwGetKey(win, GLFW_KEY_A);
         
-        collision floor = zero_collision;
+        triangle floor = zero_triangle;
         double distance = INF;
         body_find_contact(myself.body, world, coord(0,1,0), 1, floor, distance);
-        static collision lastfloor = floor;
+        static triangle lastfloor = floor;
         bool jumped = false;
         double jumpspeed = -5*units_per_meter;
         double walkspeed = 6.5*units_per_meter;//4*units_per_meter;
         
-        if(glfwGetKey(win, GLFW_KEY_SPACE) and floor != zero_collision)
+        if(glfwGetKey(win, GLFW_KEY_SPACE) and floor != zero_triangle)
         {
             myself.body.yspeed = jumpspeed;
             jumped = true;
@@ -2878,9 +3301,9 @@ int main (int argc, char ** argv)
         
         bool onfloor = false;
         
-        if(floor != zero_collision and !jumped)
+        if(floor != zero_triangle and !jumped)
         {
-            auto contact = -normalized_dot(coord(0,1,0), floor.normal);
+            auto contact = -dot(coord(0,1,0), floor.normal);
             
             if(contact > 0.7) // ~45.57 degrees not exactly 45
                 onfloor = true;
@@ -2978,15 +3401,15 @@ int main (int argc, char ** argv)
         
         collider_throw(myself, world, delta, 0);
         
-        collision newfloor = zero_collision;
+        triangle newfloor = zero_triangle;
         
         double newdistance = INF;
         body_find_contact(myself.body, world, coord(0,16,0), 16, newfloor, newdistance);
         
-        if(floor != zero_collision and (newdistance > 1 or newfloor == zero_collision) and !jumped)
+        if(floor != zero_triangle and (newdistance > 1 or newfloor == zero_triangle) and !jumped)
         {
             // stick to floor
-            if(newdistance < 16 and -normalized_dot(coord(0,1,0), floor.normal) > 0.7) // ~45.57 degrees not exactly 45
+            if(newdistance < 16 and -dot(coord(0,1,0), floor.normal) > 0.7) // ~45.57 degrees not exactly 45
             {
                 //puts("asdf");
                 coord velocity = coord(myself.body.xspeed, myself.body.yspeed, myself.body.zspeed);
@@ -3038,16 +3461,15 @@ int main (int argc, char ** argv)
                         newshot->c.body.yspeed = shotspeed*sin(deg2rad(rotation_x+rx*scatter_angle));
                         newshot->life = 8;
     
-                        //insert_box_collisions(0, 0, 0, shotsize/2, newshot->c.body.triangles, false);
-                        //insert_box_points(0, 0, 0, shotsize/2, newshot->c.body.points, false);
-                        insert_box_body(0, 0, 0, shotsize/2, -shotsize/2, shotsize/2, newshot->c.body.triangles, newshot->c.body.points, false);
+                        insert_box_body(0, 0, 0, shotsize/2, -shotsize/2, shotsize/2, newshot->c.body.collision);
                         
-                        newshot->c.body.minima = make_minima(newshot->c.body.points);
-                        newshot->c.body.maxima = make_maxima(newshot->c.body.points);
+                        newshot->c.body.minima = make_minima(newshot->c.body.collision.points);
+                        newshot->c.body.maxima = make_maxima(newshot->c.body.collision.points);
                         
                         shots.push_back(newshot);
                     }
                 }
+                printf("live projectinoes %d\n", shots.size());
             }
         }
         else
@@ -3078,8 +3500,8 @@ int main (int argc, char ** argv)
         
         myrenderer.cycle_start();
         
-        for(const auto & s : shots)
-            myrenderer.draw_box(junk, s->c.body.x, s->c.body.y, s->c.body.z, shotsize);
+        //for(const auto & s : shots)
+        //    myrenderer.draw_box(junk, s->c.body.x, s->c.body.y, s->c.body.z, shotsize);
         for(const auto & b : boxes)
             myrenderer.draw_box(wood, b->x, b->y, b->z, b->size, b->yangle);
         
@@ -3091,19 +3513,7 @@ int main (int argc, char ** argv)
         
         double render_end = glfwGetTime();
         
-        
-        printf("live projectinoes %d\n", shots.size());
-        printf("time spent rendering %.2fms\n", (render_end-render_start)*1000);
-        printf("time spent broadphase %.2fms\n", time_spent_broadphase*1000);
-        printf("time spent searching %.2fms\n", time_spent_searching*1000);
-        printf("time spent point-triangle colliding %.2fms\n", time_spent_triangle*1000);
-        printf("time spent line colliding %.2fms\n", time_spent_line*1000);
-        printf("time spent throwing %.2fms\n", time_spent_throwing*1000);
-        time_spent_broadphase = 0;
-        time_spent_searching = 0;
-        time_spent_throwing = 0;
-        time_spent_triangle = 0;
-        time_spent_line = 0;
+        time_spent_rendering = (render_end-render_start);
         
     }
     glfwDestroyWindow(win);
