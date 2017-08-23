@@ -555,7 +555,7 @@ void m4mult(float * a, float * b)
     memcpy(a, output, sizeof(float)*16);
 }
 
-bool postprocessing = false;
+bool postprocessing = true;
 
 // diagonal fov
 double fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
@@ -572,7 +572,7 @@ double sharpenamount = 0.35;
 
 // long term TODO: make the bloom blur buffers low res so that high blur radiuses are cheap instead of expensive
 int bloomradius = 8;
-int bloompasses = 0;
+int bloompasses = 2;
 
 struct renderer {
     // TODO: FIXME: add a real reference counter
@@ -747,8 +747,8 @@ struct renderer {
             layout (location = 0) in vec3 aPos;\n\
             layout (location = 1) in vec2 aTex;\n\
             layout (location = 2) in vec3 aNormal;\n\
-            varying out vec2 myTexCoord;\n\
-            varying out vec3 myVertNormal;\n\
+            out vec2 myTexCoord;\n\
+            out vec3 myVertNormal;\n\
             void main()\n\
             {\n\
                 gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);\n\
@@ -778,27 +778,34 @@ struct renderer {
             glGetShaderiv(fshader, GL_COMPILE_STATUS, &f);
             glGetProgramiv(program, GL_LINK_STATUS, &p);
             checkerr(__LINE__);
-            if(!v or !f or !p)
+            //if(!v or !f or !p)
             {
                 char info[512];
-                puts("Failed to compile shader:");
-                puts(name);
-                if(!v)
+                if(!v or !f or !p)
                 {
-                    glGetShaderInfoLog(vshader, 512, NULL, info);
-                    puts(info);
+                    puts("Failed to compile shader:");
+                    puts(name);
                 }
-                if(!f)
+                //if(!v)
                 {
-                    glGetShaderInfoLog(fshader, 512, NULL, info);
-                    puts(info);
+                    GLint len;
+                    glGetShaderInfoLog(vshader, 512, &len, info);
+                    if(len != 0) puts(info);
                 }
-                if(!p)
+                //if(!f)
                 {
-                    glGetProgramInfoLog(program, 512, NULL, info);
-                    puts(info);
+                    GLint len;
+                    glGetShaderInfoLog(fshader, 512, &len, info);
+                    if(len != 0) puts(info);
                 }
-                exit(0);
+                //if(!p)
+                {
+                    GLint len;
+                    glGetProgramInfoLog(program, 512, &len, info);
+                    if(len != 0) puts(info);
+                }
+                if(!v or !f or !p)
+                    exit(0);
             }
             
             checkerr(__LINE__);
@@ -919,9 +926,11 @@ struct renderer {
         glPrimitiveRestartIndex(65535);
         glFrontFace(GL_CCW);
         
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(0, 0, w*viewportscale, h*viewportscale);
+        
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        
         
         glGenVertexArrays(1, &MainVAO);
         glGenBuffers(1, &VBO);
@@ -964,8 +973,8 @@ struct renderer {
         layout (location = 0) in vec3 aPos;\n\
         layout (location = 1) in vec2 aTex;\n\
         layout (location = 2) in vec3 aNormal;\n\
-        varying out vec2 myTexCoord;\n\
-        varying out vec3 myNormal;\n\
+        out vec2 myTexCoord;\n\
+        out vec3 myNormal;\n\
         void main()\n\
         {\n\
             gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0) * translation * projection;\n\
@@ -977,8 +986,8 @@ struct renderer {
         uniform sampler2D mytexture;\n\
         uniform int boost;\n\
         uniform float gamma;\n\
-        varying vec2 myTexCoord;\n\
-        varying vec3 myNormal;\n\
+        in vec2 myTexCoord;\n\
+        in vec3 myNormal;\n\
         \n\
         layout(location = 0) out vec4 fragColor;\n\
         void main()\n\
@@ -1002,7 +1011,7 @@ struct renderer {
         "#version 330 core\n\
         uniform mat4 projection; // world and view transform\n\
         layout (location = 0) in vec3 aPos;\n\
-        varying out vec3 myTexCoord;\n\
+        out vec3 myTexCoord;\n\
         void main()\n\
         {\n\
             gl_Position = (vec4(aPos.x, -aPos.y, aPos.z, 1.0) * projection).xyww;\n\
@@ -1012,7 +1021,7 @@ struct renderer {
         "#version 330 core\n\
         uniform samplerCube skybox;\n\
         uniform int cylindrical;\n\
-        varying vec3 myTexCoord;\n\
+        in vec3 myTexCoord;\n\
         \n\
         layout(location = 0) out vec4 fragColor;\n\
         void main()\n\
@@ -1074,7 +1083,7 @@ struct renderer {
             uniform sampler2D mytexture;\n\
             uniform sampler2D myJincLookup;\n\
             uniform float myScale;\n\
-            varying vec2 myTexCoord;\n\
+            in vec2 myTexCoord;\n\
             #define M_PI 3.1415926435\n\
             vec2 coord;\n\
             ivec2 mySize;\n\
@@ -1212,7 +1221,7 @@ struct renderer {
             copy = new postprogram("copy", 
             "#version 330 core\n\
             uniform sampler2D mytexture;\n\
-            varying vec2 myTexCoord;\n\
+            in vec2 myTexCoord;\n\
             \n\
             layout(location = 0) out vec4 fragColor;\n\
             void main()\n\
@@ -1228,7 +1237,7 @@ struct renderer {
             sharpen = new postprogram("sharpen", 
             "#version 330 core\n\
             uniform sampler2D mytexture;\n\
-            varying vec2 myTexCoord;\n\
+            in vec2 myTexCoord;\n\
             uniform float amount;\n\
             \n\
             layout(location = 0) out vec4 fragColor;\n\
@@ -1270,7 +1279,7 @@ struct renderer {
             uniform sampler2D mytexture;\n\
             uniform float aspect; // aspect ratio w/h\n\
             uniform float fov; // half the diagonal fov in radians\n\
-            varying vec2 myTexCoord;\n\
+            in vec2 myTexCoord;\n\
             #define M_PI 3.1415926435\n\
             \n\
             layout(location = 0) out vec4 fragColor;\n\
@@ -1297,7 +1306,7 @@ struct renderer {
             meme = new postprogram("meme", 
             "#version 330 core\n\
             uniform sampler2D mytexture;\n\
-            varying vec2 myTexCoord;\n\
+            in vec2 myTexCoord;\n\
             \n\
             layout(location = 0) out vec4 fragColor;\n\
             void main()\n\
@@ -1317,13 +1326,13 @@ struct renderer {
             uniform sampler2D mytexture;\n\
             uniform int radius;\n\
             uniform float gamma;\n\
-            varying vec2 myTexCoord;\n\
+            in vec2 myTexCoord;\n\
             \n\
             layout(location = 0) out vec4 fragColor;\n\
             void main()\n\
             {\n\
                 int diameter = radius*2+1;\n\
-                ivec2 size = textureSize2D(mytexture, 0);\n\
+                ivec2 size = textureSize(mytexture, 0);\n\
                 vec4 color = vec4(0,0,0,0);\n\
                 float gather = 0;\n\
                 for(int i = -radius; i <= radius; i++)\n\
@@ -1348,13 +1357,13 @@ struct renderer {
             uniform sampler2D mytexture;\n\
             uniform int radius;\n\
             uniform float gamma;\n\
-            varying vec2 myTexCoord;\n\
+            in vec2 myTexCoord;\n\
             \n\
             layout(location = 0) out vec4 fragColor;\n\
             void main()\n\
             {\n\
                 int diameter = radius*2+1;\n\
-                ivec2 size = textureSize2D(mytexture, 0);\n\
+                ivec2 size = textureSize(mytexture, 0);\n\
                 vec4 color = vec4(0,0,0,0);\n\
                 float gather = 0;\n\
                 for(int i = -radius; i <= radius; i++)\n\
@@ -1380,7 +1389,7 @@ struct renderer {
             uniform sampler2D wetbuffer;\n\
             uniform float ratio;\n\
             uniform float gamma;\n\
-            varying vec2 myTexCoord;\n\
+            in vec2 myTexCoord;\n\
             \n\
             layout(location = 0) out vec4 fragColor;\n\
             void main()\n\
@@ -1553,6 +1562,7 @@ struct renderer {
         }
         
         glViewport(0, 0, w*viewportscale, h*viewportscale);
+        glScissor(0, 0, w*viewportscale, h*viewportscale);
         
         glUseProgram(program);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FRBO);
@@ -1650,6 +1660,7 @@ struct renderer {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glDrawBuffer(GL_BACK);
             glBlitFramebuffer(0,0,w,h,0,0,w,h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            glFinish();
         }
         if(postprocessing)
         {
@@ -1677,6 +1688,7 @@ struct renderer {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
             glDrawBuffer(GL_COLOR_ATTACHMENT0);
             glBlitFramebuffer(0,0,w*viewportscale,h*viewportscale,0,0,w*viewportscale,h*viewportscale, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            glFinish();
             checkerr(__LINE__);
         
             unsigned int last_draw_buffer = GL_COLOR_ATTACHMENT0;
