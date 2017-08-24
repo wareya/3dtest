@@ -657,9 +657,9 @@ struct renderer {
             
             glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);  
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);  
             checkerr(__LINE__);
         }
     };
@@ -1053,10 +1053,11 @@ struct renderer {
         void main()\n\
         {\n\
             gl_Position = (vec4(aPos.x, -aPos.y, aPos.z, 1.0) * projection).xyww;\n\
-            myTexCoord = aPos;\n\
+            myTexCoord = vec3(aPos.x, aPos.y, -aPos.z);\n\
         }\n",
         
         "#version 330 core\n\
+        #define M_PI 3.1415926435\n\
         uniform samplerCube skybox;\n\
         uniform int cylindrical;\n\
         in vec3 myTexCoord;\n\
@@ -1064,18 +1065,40 @@ struct renderer {
         layout(location = 0) out vec4 fragColor;\n\
         void main()\n\
         {\n\
-            if(true)//cylindrical != 1)\n\
+            if(cylindrical != 1)\n\
                 fragColor = texture(skybox, myTexCoord);\n\
             else\n\
             {\n\
                 vec3 coord = myTexCoord;\n\
-                vec2 pole = normalize(myTexCoord.xz);\n\
+                float angle = atan(coord.x, coord.z)*4/M_PI; // in eighth-rotations \n\
+                if(angle <= -3 || angle > 3)\n\
+                {\n\
+                    coord.x = -1;\n\
+                    coord.z = angle+4;\n\
+                    if(coord.z > 1) coord.z -= 8;\n\
+                    coord.z = -coord.z;\n\
+                }\n\
+                else if(angle <= -1)\n\
+                {\n\
+                    coord.x = angle+2;\n\
+                    coord.z = -1;\n\
+                }\n\
+                else if(angle <= 1)\n\
+                {\n\
+                    coord.x = 1;\n\
+                    coord.z = angle;\n\
+                }\n\
+                else\n\
+                {\n\
+                    coord.x = angle-2;\n\
+                    coord.z = 1;\n\
+                    coord.x = -coord.x;\n\
+                }\n\
+                vec2 pole = myTexCoord.xz;\n\
                 float dist = sqrt(pole.x*pole.x + pole.y*pole.y);\n\
-                float angle = atan(pole.y, pole.x);\n\
-                coord.x = cos(angle)*dist;\n\
-                coord.z = sin(angle)*dist;\n\
-                //coord.y = sqrt(1 - coord.x*coord.x + coord.z*coord.z);\n\
-                //coord = normalize(coord);\n\
+                dist /= M_PI/2*sqrt(2)/sqrt(3); // complete guess based on visual brute force\n\
+                coord.xz *= dist;\n\
+                coord = normalize(coord);\n\
                 fragColor = texture(skybox, coord);\n\
             }\n\
         }\n");
