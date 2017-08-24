@@ -529,6 +529,7 @@ double rotation_y = 0;
 double rotation_z = 0;
 
 double units_per_meter = 64;
+double step_size = units_per_meter/4;
 
 double gravity = 9.8*units_per_meter; // units per second per second
 //double shock = 5*units_per_meter; // units per second per impact
@@ -2350,7 +2351,6 @@ struct worldstew {
 worldstew world;
 
 inline void lines_cast_lines(const std::vector<lineholder *> & holder, const coord & position, const coord & motion,
-                             const coord & minima, const coord & maxima,
                              const std::vector<lineholder *> & holder2,
                              double & d1, triangle & contact_collision,
                              const double & minimum, const double & maximum)
@@ -2359,10 +2359,7 @@ inline void lines_cast_lines(const std::vector<lineholder *> & holder, const coo
     
     for(const auto & c : holder2)
     {
-        if(!aabb_overlap(minima, maxima, c->minima, c->maxima))
-            continue;
-        
-        if(dot(motion, c->lin.normal1) > 0 and dot(motion, c->lin.normal2) > 0) continue;
+        if(motion != coord() and dot(motion, c->lin.normal1) > 0 and dot(motion, c->lin.normal2) > 0) continue;
         
         for(const auto & r : holder)
         {
@@ -2406,7 +2403,6 @@ inline void lines_cast_lines(const std::vector<lineholder *> & holder, const coo
 }
 
 void rigidbody_cast_world(const collisionstew & body, const coord & position, const coord & motion,
-                          const coord & minima, const coord & maxima,
                           const std::vector<triholder *>&  tris, const std::vector<lineholder *> & lines, const std::vector<coord *> & points,
                           double & d1, triangle & contact_collision,
                           const double & minimum, const double & maximum, bool verbose = false)
@@ -2431,8 +2427,6 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
     start = glfwGetTime();
     for(const auto & c : tris)
     {
-        if(!aabb_overlap(minima, maxima, c->minima, c->maxima))
-            continue;
         for(const auto & p : body.points)
         {
             coord point = *p+position;
@@ -2448,8 +2442,6 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
     
     for(const auto & p : points)
     {
-        if(!aabb_overlap(minima, maxima, *p, *p))
-            continue;
         for(const auto & c : body.triangles)
         {
             triangle mytri = c->tri+position;
@@ -2471,7 +2463,7 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
     start = glfwGetTime();
     double d2;
     triangle new_collision;
-    lines_cast_lines(body.lines, position, motion, minima, maxima, lines, d2, new_collision, minimum, maximum);
+    lines_cast_lines(body.lines, position, motion, lines, d2, new_collision, minimum, maximum);
     if(d2 < d1 and d2 >= minimum and d2 <= maximum)
     {
         type = 3;
@@ -2879,10 +2871,58 @@ constexpr double safety = 0.01;
 //constexpr double safety_bounce = 0;
 constexpr double friction_gap = 1;
 
-
-void body_find_contact(const rigidbody & b, const worldstew & world, const coord & motion, const double & speed, triangle & goodcollision, double & gooddistance)
+// checks whether the given body, if placed at the given position, would collide with the given worldstew
+// true if in contact
+bool body_check_world(const rigidbody & body, const coord & position, const worldstew & world)
 {
-    const coord position = coord(b.x, b.y, b.z);
+    const coord unit = coord(1,1,1);
+    auto minima = body.minima+position-unit;
+    auto maxima = body.maxima+position+unit;
+    
+    double start, end;
+    start = glfwGetTime();
+    const auto tris = world.broadphase_tri(minima, maxima);
+    end = glfwGetTime();
+    time_spent_broadphase += end-start;
+    
+    const collisionstew & b = body.collision;
+    
+    for(const auto & lh : b.lines)
+    {
+        const line newline = lh->lin+position;
+        for(const auto & th : tris)
+        {
+            const triangle & newtri = th->tri;
+            double d2 = ray_cast_triangle(newline.points[0], newline.points[1]-newline.points[0], newtri);
+            if(d2 == INF) d2 = ray_cast_triangle(newline.points[1], newline.points[0]-newline.points[1], newtri);
+            if(d2 != INF) return true;
+        }
+    }
+    
+    start = glfwGetTime();
+    const auto lines = world.broadphase_line(minima, maxima);
+    end = glfwGetTime();
+    time_spent_broadphase += end-start;
+    
+    for(const auto & lh : lines)
+    {
+        const line & newline = lh->lin;
+        for(const auto & th : b.triangles)
+        {
+            const triangle newtri = th->tri+position;
+            double d2 = ray_cast_triangle(newline.points[0], newline.points[1]-newline.points[0], newtri);
+            if(d2 == INF) d2 = ray_cast_triangle(newline.points[1], newline.points[0]-newline.points[1], newtri);
+            if(d2 != INF) return true;
+        }
+    }
+    return false;
+}
+
+void body_find_contact(const rigidbody & b, const worldstew & world, const coord & position, const coord & motion, const double & speed, triangle & goodcollision, double & gooddistance)
+{
+    goodcollision = triangle();
+    gooddistance = INF;
+    
     const coord unit = coord(1,1,1);
     auto minima = make_minima(b.minima, b.minima+motion)+position-unit;
     auto maxima = make_maxima(b.maxima, b.maxima+motion)+position+unit;
@@ -2899,12 +2939,12 @@ void body_find_contact(const rigidbody & b, const worldstew & world, const coord
     // select closest collidable triangle
     start = glfwGetTime();
     
-    rigidbody_cast_world(b.collision, position, motion, minima, maxima, world_tris, world_lines, world_points, gooddistance, goodcollision, 0, speed, true);
+    rigidbody_cast_world(b.collision, position, motion, world_tris, world_lines, world_points, gooddistance, goodcollision, 0, speed, true);
     
     if(goodcollision != zero_triangle)
     {
         double dottie = -dot(normalize(motion), goodcollision.normal);
-        if(dottie <= 0)
+        if(dottie < -0)
         {
             puts("bad dot in finding contact");
             printf("%.80f\n", dottie);
@@ -2913,14 +2953,18 @@ void body_find_contact(const rigidbody & b, const worldstew & world, const coord
             exit(0);
         }
         gooddistance -= safety;
-        gooddistance = max(0, gooddistance); // prevents us from ejecting into other walls
     }
     
     end = glfwGetTime();
     time_spent_searching += end-start;
 }
+void body_find_contact(const rigidbody & b, const worldstew & world, const coord & motion, const double & speed, triangle & goodcollision, double & gooddistance)
+{
+    coord position = coord(b.x, b.y, b.z);
+    body_find_contact(b, world, position, motion, speed, goodcollision, gooddistance);
+}
 
-void collider_throw(collider & c, const worldstew & world, const double & delta, const double & friction)
+void collider_throw(collider & c, const worldstew & world, const double & delta, const double & friction, bool dostairs = false)
 {
             
     rigidbody & b = c.body;
@@ -2963,6 +3007,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
         double gooddistance = INF;
         
         body_find_contact(b, world, motion*time, speed, goodcollision, gooddistance);
+        gooddistance = max(0, gooddistance); // prevents us from ejecting into other walls
         
         double throw_start = glfwGetTime();
         
@@ -2970,178 +3015,235 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
         {
             refusedtohit = false;
             
-            auto p = goodcollision;
-            
-            double airtime = gooddistance/speed*time;
-            
-            double newtime = time - abs(airtime);
-            
-            for(unsigned int j = 0; j < touching.size(); j++)
+            bool didstairs = false;
+            if(dostairs)
             {
-                if(touching[j] == p)
+                // check for stairstepping
+                auto testposition = coord(b.x, b.y, b.z);
+                triangle testcollision = zero_triangle;
+                double testdistance = INF;
+                body_find_contact(b, world, testposition, coord(0, safety*2, 0), safety*2, testcollision, testdistance);
+                // on ground
+                if(testdistance != INF)
                 {
-                    if(debughard) puts("erasing self");
-                    touching.erase(touching.begin()+(j--));
-                }
-                else
-                {
-                    triangle contact_collision = zero_triangle;
-                    double dist = INF;
-                    if(debughard) puts("erasure test");
-                    rigidbody_cast_virtual_triangle(b.collision, coord(b.x, b.y, b.z), -touching[j].normal, touching[j], dist, contact_collision, -safety*3, safety*3);
-                    if(dist == INF)
+                    testposition = coord(b.x, b.y-(step_size+safety), b.z);
+                    //puts("checking stairs from on ground");
+                    // check movement step_size above our target location (accounting for safety)
+                    body_find_contact(b, world, testposition, motion*time, speed, testcollision, testdistance);
+                    // didn't hit anything
+                    if(testdistance == INF)
                     {
-                        if(debughard) puts("erasing inside");
-                        if(debughard) printf("%f\n", dist);
-                        if(debughard) printf("%f\n", airtime);
-                        if(debughard) printf("%f\n", time);
+                        // make sure there's ground under the new position
+                        //puts("testing for ground");
+                        triangle testcollision2 = zero_triangle;
+                        double testdistance2 = INF;
+                        body_find_contact(b, world, testposition+(motion*time), coord(0, step_size+safety, 0), step_size+safety, testcollision2, testdistance2);
+                        if(testdistance2 != INF)
+                        {
+                            if(-dot(coord(0,1,0),testcollision.normal) > 0.7)
+                            {
+                                testposition.y += testdistance2;
+                                didstairs = true;
+                            }
+                        }
+                    }
+                    // hit a slope
+                    else if(testdistance > gooddistance and -dot(coord(0,1,0),testcollision.normal) > 0.7)
+                    {
+                        didstairs = true;
+                    }
+                    if(didstairs)
+                    {
+                        testdistance = max(0, testdistance);
+                        testposition = testposition + (motion*time);
+                        b.x = testposition.x;
+                        b.y = testposition.y;
+                        b.z = testposition.z;
+                        
+                        touching = {goodcollision};
+                        
+                        double airtime = testdistance/speed*time;
+                        double newtime = time - abs(airtime);
+                        time = newtime;
+                    }
+                    //puts("done checking stairs");
+                }
+            }
+            
+            if(!didstairs)
+            {
+                auto p = goodcollision;
+                
+                double airtime = gooddistance/speed*time;
+                double newtime = time - abs(airtime);
+                
+                for(unsigned int j = 0; j < touching.size(); j++)
+                {
+                    if(touching[j] == p)
+                    {
+                        if(debughard) puts("erasing self");
                         touching.erase(touching.begin()+(j--));
                     }
-                }
-            }
-            
-            if(touching.size() >= 3)
-            {
-                puts("aslgjaeruogjadfhlaetrhAERFGIKERGAERHGAEUIRTH===========");
-                exit(0);
-            }
-            
-            touching.push_back(p);
-            
-            // FIXME: handle seams
-            if(last_collision != zero_triangle)
-            {
-                auto contact_direction = last_collision.normal;
-                
-                {
-                    double speed = magnitude(motion);
-                    if(speed != 0)
+                    else
                     {
-                        double normalforce = -dot(contact_direction, coord(0, 1, 0));
-                        if(normalforce < 0) normalforce = 0;
-                        double half_newspeed = speed-friction*abs(airtime)*normalforce;
-                        if(half_newspeed < 0) half_newspeed = 0;
-                        
-                        motion = motion*(half_newspeed/speed);
-                        
-                        b.xspeed = motion.x;
-                        b.yspeed = motion.y;
-                        b.zspeed = motion.z;
+                        triangle contact_collision = zero_triangle;
+                        double dist = INF;
+                        if(debughard) puts("erasure test");
+                        rigidbody_cast_virtual_triangle(b.collision, coord(b.x, b.y, b.z), -touching[j].normal, touching[j], dist, contact_collision, -safety*3, safety*3);
+                        if(dist == INF)
+                        {
+                            if(debughard) puts("erasing inside");
+                            if(debughard) printf("%f\n", dist);
+                            if(debughard) printf("%f\n", airtime);
+                            if(debughard) printf("%f\n", time);
+                            touching.erase(touching.begin()+(j--));
+                        }
                     }
                 }
-            }
-            
-            b.x += airtime*b.xspeed;
-            b.y += airtime*b.yspeed;
-            b.z += airtime*b.zspeed;
-            
-            double fudge_space = 0;//.02;
-            
-            if(touching.size() == 1)
-            {
-                if(debughard) puts("hit");
-                //if(debughard) printf("distance %0.8f\n", gooddistance);
-                //if(debughard) printf("early  (%0.8f, %0.8f, %0.8f)\n", motion.x, motion.y, motion.z);
-                //auto dot1 = dot(motion, p.normal);
-                motion = reject(motion, p.normal);
-                //if(debughard) printf("normal (%0.8f, %0.8f, %0.8f)\n", p.normal.x, p.normal.y, p.normal.z);
-                //if(debughard) printf("late   (%0.8f, %0.8f, %0.8f)\n", motion.x, motion.y, motion.z);
-                //auto dot2 = dot(motion, p.normal);
-                //if(debughard) printf("dots %0.8f %0.8f\n", dot1, dot2);
-            }
-            else if(touching.size() == 2)
-            {
-                auto previous = touching[0];
-                auto current = touching[1];
-                auto mydot = dot(current.normal, previous.normal);
-                if(mydot <= fudge_space)
-                {
-                    if(debughard) puts("seam");
-                    auto seam = cross(current.normal, previous.normal);
-                    motion = project(motion, seam);
-                }
-                else
-                {
-                    if(debughard) puts("skip");
-                    touching = {current};
-                    motion = reject(motion, current.normal);
-                }
-            }
-            else if(touching.size() == 3)
-            {
-                auto previous_a = touching[0];
-                auto previous_b = touching[1];
-                auto current = touching[2];
                 
-                auto dot_a = dot(current.normal, previous_a.normal);
-                auto dot_b = dot(current.normal, previous_b.normal);
-                
-                // skip off both old surfaces
-                if(dot_a > fudge_space and dot_b > fudge_space)
+                if(touching.size() >= 3)
                 {
-                    if(debughard) puts("A");
-                    touching = {current};
-                    motion = reject(motion, current.normal);
-                }
-                // skip into both old surfaces
-                else if(dot_a <= fudge_space and dot_b <= fudge_space)
-                {
-                    if(debughard) puts("B");
-                    //touching = {previous_b, current};
-                    motion = coord();
-                    //break;
-                }
-                // skip into surface B
-                else if(dot_a > fudge_space)
-                {
-                    if(debughard) puts("C");
-                    if(debughard) printf("%f %f %f\n", previous_a.normal.x, previous_a.normal.y, previous_a.normal.z);
-                    if(debughard) printf("%f %f %f\n", previous_b.normal.x, previous_b.normal.y, previous_b.normal.z);
-                    if(debughard) printf("%f %f %f\n", current.normal.x, current.normal.y, current.normal.z);
-                    if(debughard) printf("%f %f %f\n", motion.x, motion.y, motion.z);
-                    touching = {previous_b, current};
-                    auto seam = cross(current.normal, previous_b.normal);
-                    motion = project(motion, seam);
-                    if(debughard) printf("%f %f %f\n", motion.x, motion.y, motion.z);
-                }
-                // skip into surface A
-                else if(dot_b > fudge_space)
-                {
-                    if(debughard) puts("D");
-                    touching = {previous_a, current};
-                    auto seam = cross(current.normal, previous_a.normal);
-                    motion = project(motion, seam);
-                }
-                else
-                {
-                    puts("-----------------------MAYDAY STATE");
+                    puts("aslgjaeruogjadfhlaetrhAERFGIKERGAERHGAEUIRTH===========");
                     exit(0);
                 }
-            }
-            
-            b.xspeed = motion.x;
-            b.yspeed = motion.y;
-            b.zspeed = motion.z;
-            
-            last_collision = p;
-            reached = true;
-            hit_anything_at_all = true;
-            
-            if(newtime >= time)
-            {
-                //puts("backtracking");
-                baditers++;
-                if(baditers > 3)
+                
+                touching.push_back(p);
+                
+                // FIXME: handle seams
+                if(last_collision != zero_triangle)
                 {
-                    puts("----breaking early");
-                    time = 0;
+                    auto contact_direction = last_collision.normal;
+                    
+                    {
+                        double speed = magnitude(motion);
+                        if(speed != 0)
+                        {
+                            double normalforce = -dot(contact_direction, coord(0, 1, 0));
+                            if(normalforce < 0) normalforce = 0;
+                            double half_newspeed = speed-friction*abs(airtime)*normalforce;
+                            if(half_newspeed < 0) half_newspeed = 0;
+                            
+                            motion = motion*(half_newspeed/speed);
+                            
+                            b.xspeed = motion.x;
+                            b.yspeed = motion.y;
+                            b.zspeed = motion.z;
+                        }
+                    }
                 }
-            }
-            else
-            {
-                time = newtime;
-                if(debughard) printf("continuing %f\n", time);
-                if(debughard) printf("speed %f %f %f\n", motion.x, motion.y, motion.z);
+                
+                b.x += airtime*b.xspeed;
+                b.y += airtime*b.yspeed;
+                b.z += airtime*b.zspeed;
+                
+                double fudge_space = 0;//.02;
+                
+                if(touching.size() == 1)
+                {
+                    if(debughard) puts("hit");
+                    //if(debughard) printf("distance %0.8f\n", gooddistance);
+                    //if(debughard) printf("early  (%0.8f, %0.8f, %0.8f)\n", motion.x, motion.y, motion.z);
+                    //auto dot1 = dot(motion, p.normal);
+                    motion = reject(motion, p.normal);
+                    //if(debughard) printf("normal (%0.8f, %0.8f, %0.8f)\n", p.normal.x, p.normal.y, p.normal.z);
+                    //if(debughard) printf("late   (%0.8f, %0.8f, %0.8f)\n", motion.x, motion.y, motion.z);
+                    //auto dot2 = dot(motion, p.normal);
+                    //if(debughard) printf("dots %0.8f %0.8f\n", dot1, dot2);
+                }
+                else if(touching.size() == 2)
+                {
+                    auto previous = touching[0];
+                    auto current = touching[1];
+                    auto mydot = dot(current.normal, previous.normal);
+                    if(mydot <= fudge_space)
+                    {
+                        if(debughard) puts("seam");
+                        auto seam = cross(current.normal, previous.normal);
+                        motion = project(motion, seam);
+                    }
+                    else
+                    {
+                        if(debughard) puts("skip");
+                        touching = {current};
+                        motion = reject(motion, current.normal);
+                    }
+                }
+                else if(touching.size() == 3)
+                {
+                    auto previous_a = touching[0];
+                    auto previous_b = touching[1];
+                    auto current = touching[2];
+                    
+                    auto dot_a = dot(current.normal, previous_a.normal);
+                    auto dot_b = dot(current.normal, previous_b.normal);
+                    
+                    // skip off both old surfaces
+                    if(dot_a > fudge_space and dot_b > fudge_space)
+                    {
+                        if(debughard) puts("A");
+                        touching = {current};
+                        motion = reject(motion, current.normal);
+                    }
+                    // skip into both old surfaces
+                    else if(dot_a <= fudge_space and dot_b <= fudge_space)
+                    {
+                        if(debughard) puts("B");
+                        //touching = {previous_b, current};
+                        motion = coord();
+                        //break;
+                    }
+                    // skip into surface B
+                    else if(dot_a > fudge_space)
+                    {
+                        if(debughard) puts("C");
+                        if(debughard) printf("%f %f %f\n", previous_a.normal.x, previous_a.normal.y, previous_a.normal.z);
+                        if(debughard) printf("%f %f %f\n", previous_b.normal.x, previous_b.normal.y, previous_b.normal.z);
+                        if(debughard) printf("%f %f %f\n", current.normal.x, current.normal.y, current.normal.z);
+                        if(debughard) printf("%f %f %f\n", motion.x, motion.y, motion.z);
+                        touching = {previous_b, current};
+                        auto seam = cross(current.normal, previous_b.normal);
+                        motion = project(motion, seam);
+                        if(debughard) printf("%f %f %f\n", motion.x, motion.y, motion.z);
+                    }
+                    // skip into surface A
+                    else if(dot_b > fudge_space)
+                    {
+                        if(debughard) puts("D");
+                        touching = {previous_a, current};
+                        auto seam = cross(current.normal, previous_a.normal);
+                        motion = project(motion, seam);
+                    }
+                    else
+                    {
+                        puts("-----------------------MAYDAY STATE");
+                        exit(0);
+                    }
+                }
+                
+                b.xspeed = motion.x;
+                b.yspeed = motion.y;
+                b.zspeed = motion.z;
+                
+                last_collision = p;
+                reached = true;
+                hit_anything_at_all = true;
+                
+                if(newtime >= time)
+                {
+                    //puts("backtracking");
+                    baditers++;
+                    if(baditers > 3)
+                    {
+                        puts("----breaking early");
+                        time = 0;
+                    }
+                }
+                else
+                {
+                    time = newtime;
+                    if(debughard) printf("continuing %f\n", time);
+                    if(debughard) printf("speed %f %f %f\n", motion.x, motion.y, motion.z);
+                }
             }
         }
         if(!hit_anything_at_all)
@@ -3199,7 +3301,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
 
 double height = 1.75*units_per_meter;
 double width = height/2;
-double offset = height*5/90;
+double offset = round(height*5/90);
 
 collider myself;
 
@@ -3221,11 +3323,14 @@ int main (int argc, char ** argv)
     
     generate_terrain();
     
+    // far away
     add_box(0, 1024+256-8, 2048, 2048);
     add_box(0, 1024+256-8-2048, 2048+2048, 2048);
     
     
     add_box(128, -256, 96+128, units_per_meter);
+    add_box(128+16, -256+16, 96+128+16, units_per_meter);
+    add_box(128+32, -256+32, 96+128+32, units_per_meter);
     
     add_box(0, -128, 96, units_per_meter);
     add_box(0, -128+64, 96, units_per_meter);
@@ -3548,17 +3653,18 @@ int main (int argc, char ** argv)
         if(!onfloor)
             myself.body.yspeed += gravity*delta/2;
         
-        collider_throw(myself, world, delta, 0);
+        collider_throw(myself, world, delta, 0, true);
+        
+        double speed = magnitude(coord(myself.body.xspeed, myself.body.yspeed, myself.body.zspeed))*delta;
         
         triangle newfloor = zero_triangle;
-        
         double newdistance = INF;
-        body_find_contact(myself.body, world, coord(0,16,0), 16, newfloor, newdistance);
+        body_find_contact(myself.body, world, coord(0,speed,0), speed, newfloor, newdistance);
         
         if(floor != zero_triangle and (newdistance > 1 or newfloor == zero_triangle) and !jumped)
         {
             // stick to floor
-            if(newdistance < 16 and -dot(coord(0,1,0), floor.normal) > 0.7) // ~45.57 degrees not exactly 45
+            if(newdistance != INF and -dot(coord(0,1,0), floor.normal) > 0.7) // ~45.57 degrees not exactly 45
             {
                 //puts("asdf");
                 coord velocity = coord(myself.body.xspeed, myself.body.yspeed, myself.body.zspeed);
@@ -3580,11 +3686,12 @@ int main (int argc, char ** argv)
             myself.body.yspeed += gravity*delta/2;
         
         //printf("speed %f\n", sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed)/units_per_meter);
-        //printf("position %f %f %f\n", myself.body.x, myself.body.y, myself.body.z);
         
         x = myself.body.x;
         y = myself.body.y;
         z = myself.body.z;
+        
+        //printf("frame end position %f %f %f\n", x, y, z);
         
         static bool right_waspressed = false;
         if(glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)
