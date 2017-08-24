@@ -525,7 +525,7 @@ double y = -256;
 double z = 0;
 
 double rotation_x = 0;
-double rotation_y = 6;
+double rotation_y = 0;
 double rotation_z = 0;
 
 double units_per_meter = 64;
@@ -1096,7 +1096,7 @@ struct renderer {
                 }\n\
                 vec2 pole = myTexCoord.xz;\n\
                 float dist = sqrt(pole.x*pole.x + pole.y*pole.y);\n\
-                dist /= M_PI/2*sqrt(2)/sqrt(3); // complete guess based on visual brute force\n\
+                dist /= 4/M_PI;\n\
                 coord.xz *= dist;\n\
                 coord = normalize(coord);\n\
                 fragColor = texture(skybox, coord);\n\
