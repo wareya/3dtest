@@ -59,6 +59,9 @@ double time_spent_throwing = 0;
 struct vertex {
     float x, y, z, u, v, nx, ny, nz;
 };
+struct simplevertex {
+    float x, y, z, u, v;
+};
 struct basicvertex {
     float x, y, z;
 };
@@ -747,9 +750,7 @@ struct renderer {
             "#version 330 core\n\
             layout (location = 0) in vec3 aPos;\n\
             layout (location = 1) in vec2 aTex;\n\
-            layout (location = 2) in vec3 aNormal;\n\
             out vec2 myTexCoord;\n\
-            out vec3 myVertNormal;\n\
             void main()\n\
             {\n\
                 gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);\n\
@@ -816,8 +817,15 @@ struct renderer {
         }
     };
     
-    // FBO 0: hi-res, 1: downsampled raw, 2/3: double wet buffers (e.g. multipass bloom)
-    unsigned int MainVAO, VIO, VBO, FRBO, RBOC, RBOD, FBO_hires, FBO, FBOtexture0, FBOtexture1, FBOtexture2, FBOtexture3, FBOtexture4, CubeVAO, CubeVBO, CubeVIO, jinctexid;
+    unsigned int
+    BoxVAO, BoxVIO, BoxVBO,
+    TerrainVAO, TerrainVIO, TerrainVBO,
+    ScreenVAO, ScreenVIO, ScreenVBO,
+    CubeVAO, CubeVBO, CubeVIO,
+    FRBO, RBOC, RBOD,
+    FBO_hires, FBOtexture0, FBOtexture1,
+    FBO, FBOtexture2, FBOtexture3, FBOtexture4,
+    jinctexid;
     int w, h;
     unsigned int vshader;
     unsigned int fshader;
@@ -954,57 +962,59 @@ struct renderer {
         
         checkerr(__LINE__);
         
-        glGenVertexArrays(1, &MainVAO);
-        glGenBuffers(1, &VBO);
-        glGenBuffers(1, &VIO);
-        
-        checkerr(__LINE__);
-        
-        glBindVertexArray(MainVAO);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        
-        checkerr(__LINE__);
+        glGenVertexArrays(1, &BoxVAO);
+        glGenBuffers(1, &BoxVBO);
+        glGenBuffers(1, &BoxVIO);
+        glBindVertexArray(BoxVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, BoxVBO);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)0);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, u));
         glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, nx));
-        
-        checkerr(__LINE__);
         glEnableVertexAttribArray(0);
         glEnableVertexAttribArray(1);
         glEnableVertexAttribArray(2);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, BoxVIO);
         
         checkerr(__LINE__);
         
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, VIO);
+        glGenVertexArrays(1, &TerrainVAO);
+        glGenBuffers(1, &TerrainVBO);
+        glGenBuffers(1, &TerrainVIO);
+        glBindVertexArray(TerrainVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, TerrainVBO);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, u));
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, nx));
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glEnableVertexAttribArray(2);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, TerrainVIO);
         
+        checkerr(__LINE__);
+        
+        glGenVertexArrays(1, &ScreenVAO);
+        glGenBuffers(1, &ScreenVBO);
+        glGenBuffers(1, &ScreenVIO);
+        glBindVertexArray(ScreenVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, ScreenVBO);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(simplevertex), (void*)0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(simplevertex), (void*)offsetof(simplevertex, u));
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ScreenVIO);
         checkerr(__LINE__);
         
         glGenVertexArrays(1, &CubeVAO);
         glGenBuffers(1, &CubeVBO);
         glGenBuffers(1, &CubeVIO);
-        
-        checkerr(__LINE__);
-        
         glBindVertexArray(CubeVAO);
-        
-        checkerr(__LINE__);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        
-        checkerr(__LINE__);
-        
         glBindBuffer(GL_ARRAY_BUFFER, CubeVBO);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(basicvertex), (void*)0);
         glEnableVertexAttribArray(0);
-        
-        checkerr(__LINE__);
-        
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, CubeVIO);
         
         checkerr(__LINE__);
         
-        glBindVertexArray(MainVAO);
         mainprogram(vshader, fshader, program, 
         "#version 330 core\n\
         uniform mat4 projection; // world and view transform\n\
@@ -1750,21 +1760,26 @@ struct renderer {
         if(postprocessing)
         {
             glDisable(GL_CULL_FACE);
-            //glUseProgram(program);
-            glBindVertexArray(MainVAO);
-            glBindBuffer(GL_ARRAY_BUFFER, VBO);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, VIO);
+            
+            glBindVertexArray(ScreenVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, ScreenVBO);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ScreenVIO);
             
             glDisable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
             
-            const vertex vertices[] = {
-                {-1.f, -1.f, 0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
-                { 1.f, -1.f, 0.5f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
-                {-1.f,  1.f, 0.5f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f},
-                { 1.f,  1.f, 0.5f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f},
-            };
-            glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,  GL_DYNAMIC_DRAW);
+            static bool init = false;
+            if(!init)
+            {
+                init = true;
+                const simplevertex vertices[] = {
+                    {-1.f, -1.f, 0.5f, 0.0f, 0.0f},
+                    { 1.f, -1.f, 0.5f, 1.0f, 0.0f},
+                    {-1.f,  1.f, 0.5f, 0.0f, 1.0f},
+                    { 1.f,  1.f, 0.5f, 1.0f, 1.0f},
+                };
+                glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,  GL_STATIC_DRAW);
+            }
             checkerr(__LINE__);
             
             glViewport(0, 0, w*viewportscale, h*viewportscale);
@@ -1947,43 +1962,11 @@ struct renderer {
         yangle *= M_PI/180.0;
         
         glUseProgram(program);
-        glBindVertexArray(MainVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, VIO);
+        glBindVertexArray(BoxVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, BoxVBO);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, BoxVIO);
         
-        double s = 0.5;
-        const vertex vertices[4*6] = {
-            // top
-            {-s,-s,-s, 0.0f, 0.0f, 0.0f,-1.0f, 0.0f},
-            { s,-s,-s, 1.0f, 0.0f, 0.0f,-1.0f, 0.0f},
-            {-s,-s, s, 0.0f, 1.0f, 0.0f,-1.0f, 0.0f},
-            { s,-s, s, 1.0f, 1.0f, 0.0f,-1.0f, 0.0f},
-            // bottom
-            { s, s,-s, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
-            {-s, s,-s, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
-            { s, s, s, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f},
-            {-s, s, s, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f},
-            // left
-            {-s, s,-s, 0.0f, 1.0f,-1.0f, 0.0f, 0.0f},
-            {-s,-s,-s, 0.0f, 0.0f,-1.0f, 0.0f, 0.0f},
-            {-s, s, s, 1.0f, 1.0f,-1.0f, 0.0f, 0.0f},
-            {-s,-s, s, 1.0f, 0.0f,-1.0f, 0.0f, 0.0f},
-            // right
-            { s,-s,-s, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
-            { s, s,-s, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f},
-            { s,-s, s, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f},
-            { s, s, s, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f},
-            // front or back
-            { s,-s,-s, 0.0f, 0.0f, 0.0f, 0.0f,-1.0f},
-            {-s,-s,-s, 1.0f, 0.0f, 0.0f, 0.0f,-1.0f},
-            { s, s,-s, 0.0f, 1.0f, 0.0f, 0.0f,-1.0f},
-            {-s, s,-s, 1.0f, 1.0f, 0.0f, 0.0f,-1.0f},
-            // opposite
-            {-s,-s, s, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            { s,-s, s, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {-s, s, s, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
-            { s, s, s, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
-        };
+        static bool init = false;
         // 65535
         const unsigned short indexes[] = {
             0, 1, 2, 3, 65535,
@@ -1993,6 +1976,45 @@ struct renderer {
             16, 17, 18, 19, 65535,
             20, 21, 22, 23
         };
+        if(!init)
+        {
+            init = true;
+            double s = 0.5;
+            const vertex vertices[4*6] = {
+                // top
+                {-s,-s,-s, 0.0f, 0.0f, 0.0f,-1.0f, 0.0f},
+                { s,-s,-s, 1.0f, 0.0f, 0.0f,-1.0f, 0.0f},
+                {-s,-s, s, 0.0f, 1.0f, 0.0f,-1.0f, 0.0f},
+                { s,-s, s, 1.0f, 1.0f, 0.0f,-1.0f, 0.0f},
+                // bottom
+                { s, s,-s, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+                {-s, s,-s, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+                { s, s, s, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f},
+                {-s, s, s, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f},
+                // left
+                {-s, s,-s, 0.0f, 1.0f,-1.0f, 0.0f, 0.0f},
+                {-s,-s,-s, 0.0f, 0.0f,-1.0f, 0.0f, 0.0f},
+                {-s, s, s, 1.0f, 1.0f,-1.0f, 0.0f, 0.0f},
+                {-s,-s, s, 1.0f, 0.0f,-1.0f, 0.0f, 0.0f},
+                // right
+                { s,-s,-s, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+                { s, s,-s, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f},
+                { s,-s, s, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+                { s, s, s, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f},
+                // front or back
+                { s,-s,-s, 0.0f, 0.0f, 0.0f, 0.0f,-1.0f},
+                {-s,-s,-s, 1.0f, 0.0f, 0.0f, 0.0f,-1.0f},
+                { s, s,-s, 0.0f, 1.0f, 0.0f, 0.0f,-1.0f},
+                {-s, s,-s, 1.0f, 1.0f, 0.0f, 0.0f,-1.0f},
+                // opposite
+                {-s,-s, s, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+                { s,-s, s, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+                {-s, s, s, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+                { s, s, s, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+            };
+            glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,  GL_STATIC_DRAW);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexes), indexes, GL_STATIC_DRAW);
+        }
         
         float translation[16] = {
             scale,  0.0f, 0.0f,    x,
@@ -2014,8 +2036,6 @@ struct renderer {
         glUniform1i(glGetUniformLocation(program, "boost"), texture->boost);
         glBindTexture(GL_TEXTURE_2D, texture->texid);
         
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,  GL_DYNAMIC_DRAW);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexes), indexes, GL_DYNAMIC_DRAW);
         glDrawElements(GL_TRIANGLE_STRIP, sizeof(indexes)/sizeof(indexes[0]), GL_UNSIGNED_SHORT, 0);
         
         //glBufferData(GL_ARRAY_BUFFER, sizeof(vertices2), vertices2,  GL_DYNAMIC_DRAW);
@@ -2030,34 +2050,46 @@ struct renderer {
         glBindBuffer(GL_ARRAY_BUFFER, CubeVBO);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, CubeVIO);
         
-        const basicvertex vertices[] = {
-            { 1, 1, 1},
-            {-1, 1, 1},
-            { 1,-1, 1},
-            {-1,-1, 1},
-            { 1,-1,-1},
-            {-1,-1,-1},
-            { 1, 1,-1},
-            {-1, 1,-1},
-        };
         // 65535
-        const unsigned short indexes1[] = { 0, 1, 2, 3, 4, 5, 6, 7, 65535, 2, 4, 0, 6, 1, 7, 3, 5 };
+        const unsigned short indexes[] = { 0, 1, 2, 3, 4, 5, 6, 7, 65535, 2, 4, 0, 6, 1, 7, 3, 5 };
+        static bool init = false;
+        if(!init)
+        {
+            init = true;
+            const basicvertex vertices[] = {
+                { 1, 1, 1},
+                {-1, 1, 1},
+                { 1,-1, 1},
+                {-1,-1, 1},
+                { 1,-1,-1},
+                {-1,-1,-1},
+                { 1, 1,-1},
+                {-1, 1,-1},
+            };
+            glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,  GL_STATIC_DRAW);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexes), indexes, GL_STATIC_DRAW);
+        }
         
         glBindTexture(GL_TEXTURE_CUBE_MAP, map->texid);
         
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,  GL_DYNAMIC_DRAW);
-        
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexes1), indexes1, GL_DYNAMIC_DRAW);
-        glDrawElements(GL_TRIANGLE_STRIP, sizeof(indexes1)/sizeof(indexes1[0]), GL_UNSIGNED_SHORT, 0);
+        glDrawElements(GL_TRIANGLE_STRIP, sizeof(indexes)/sizeof(indexes[0]), GL_UNSIGNED_SHORT, 0);
         checkerr(__LINE__);
     }
     void draw_terrain(texture * texture, vertex * terrain, int terrainsize, unsigned short * terrainindexes, int terrainindexessize, double x, double y, double z, double scale)
     {
         glUseProgram(program);
-        glBindVertexArray(MainVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, VIO);
+        glBindVertexArray(TerrainVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, TerrainVBO);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, TerrainVIO);
         
+        static bool init = false;
+        if(!init)
+        {
+            init = true;
+            glBufferData(GL_ARRAY_BUFFER, terrainsize, terrain,  GL_STATIC_DRAW);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, terrainindexessize, terrainindexes, GL_STATIC_DRAW);
+        }
+            
         float translation[16] = {
             scale,  0.0f, 0.0f,    x,
              0.0f, scale, 0.0f,    y,
@@ -2068,9 +2100,7 @@ struct renderer {
         glUniformMatrix4fv(glGetUniformLocation(program, "translation"), 1, 0, translation);
         glUniform1i(glGetUniformLocation(program, "boost"), texture->boost);
         glBindTexture(GL_TEXTURE_2D, texture->texid);
-        glBufferData(GL_ARRAY_BUFFER, terrainsize, terrain,  GL_DYNAMIC_DRAW);
         
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, terrainindexessize, terrainindexes, GL_DYNAMIC_DRAW);
         glDrawElements(GL_TRIANGLE_STRIP, terrainindexessize/sizeof(terrainindexes[0]), GL_UNSIGNED_SHORT, 0);
         
         checkerr(__LINE__);
@@ -2081,7 +2111,9 @@ template <typename T>
 struct octnode {
     std::array<octnode *, 8> * nodes;
     std::vector<T *> tags;
+    std::vector<T *> overtags;
     std::vector<T *> outertags;
+    uint64_t contents = 0;
     bool isroot = false;
     coord minima, maxima;
     // top level constructor
@@ -2214,21 +2246,31 @@ void sorted_insert(std::vector<T> & a, const T & b)
 template <typename T>
 void octnode<T>::add(T * a, const coord & minima, const coord & maxima)
 {
-    if(contact(minima, maxima))
+    if(aabb_contained(this->minima, this->maxima, minima, maxima))
+    {
+        sorted_insert(overtags, a);
+        contents++;
+    }
+    else if(contact(minima, maxima))
     {
         sorted_insert(tags, a);
+        contents++;
         if(nodes)
             for(auto & e : *nodes)
                 e->add(a, minima, maxima);
     }
     else if(isroot)
+    {
         sorted_insert(outertags, a);
+        contents++;
+    }
 }
 
 // returns a sorted list of potential overlaps
 template <>
 void octnode<coord>::potentials(const coord & minima, const coord & maxima, std::vector<coord *> & ret) const
 {
+    if(contents == 0) return;
     #if 0
     dummy_union(ret, outertags);
     dummy_union(ret, tags);
@@ -2246,6 +2288,8 @@ void octnode<coord>::potentials(const coord & minima, const coord & maxima, std:
     // check if we're overlapping, then ask our child nodes, or insert if we're the last child
     if(contact(minima, maxima))
     {
+        for(const auto & e : overtags)
+            sorted_insert(ret, e);
         // pretend to be a child node if the object completely encompasses us
         if(nodes == nullptr or aabb_contained(this->minima, this->maxima, minima, maxima))
         {
@@ -2265,6 +2309,7 @@ void octnode<coord>::potentials(const coord & minima, const coord & maxima, std:
 template <typename T>
 void octnode<T>::potentials(const coord & minima, const coord & maxima, std::vector<T *> & ret) const
 {
+    if(contents == 0) return;
     #if 0
     dummy_union(ret, outertags);
     dummy_union(ret, tags);
@@ -2282,12 +2327,9 @@ void octnode<T>::potentials(const coord & minima, const coord & maxima, std::vec
     // check if we're overlapping, then ask our child nodes, or insert if we're the last child
     if(contact(minima, maxima))
     {
-        // pretend to be a child node if the object completely encompasses us
-        #if 0
-        if(true)
-        #else
+        for(const auto & e : overtags)
+            sorted_insert(ret, e);
         if(nodes == nullptr or aabb_contained(this->minima, this->maxima, minima, maxima))
-        #endif
         {
             for(const auto & e : tags)
             {
@@ -2890,12 +2932,13 @@ bool body_check_world(const rigidbody & body, const coord & position, const worl
     for(const auto & lh : b.lines)
     {
         const line newline = lh->lin+position;
+        double length = magnitude(newline.points[1]-newline.points[0]);
         for(const auto & th : tris)
         {
             const triangle & newtri = th->tri;
             double d2 = ray_cast_triangle(newline.points[0], newline.points[1]-newline.points[0], newtri);
-            if(d2 == INF) d2 = ray_cast_triangle(newline.points[1], newline.points[0]-newline.points[1], newtri);
-            if(d2 != INF) return true;
+            if(d2 > length) d2 = ray_cast_triangle(newline.points[1], newline.points[0]-newline.points[1], newtri);
+            if(d2 <= length) return true;
         }
     }
     
@@ -2907,12 +2950,13 @@ bool body_check_world(const rigidbody & body, const coord & position, const worl
     for(const auto & lh : lines)
     {
         const line & newline = lh->lin;
+        double length = magnitude(newline.points[1]-newline.points[0]);
         for(const auto & th : b.triangles)
         {
             const triangle newtri = th->tri+position;
             double d2 = ray_cast_triangle(newline.points[0], newline.points[1]-newline.points[0], newtri);
-            if(d2 == INF) d2 = ray_cast_triangle(newline.points[1], newline.points[0]-newline.points[1], newtri);
-            if(d2 != INF) return true;
+            if(d2 > length) d2 = ray_cast_triangle(newline.points[1], newline.points[0]-newline.points[1], newtri);
+            if(d2 <= length) return true;
         }
     }
     return false;
@@ -3022,12 +3066,16 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 auto testposition = coord(b.x, b.y, b.z);
                 triangle testcollision = zero_triangle;
                 double testdistance = INF;
-                body_find_contact(b, world, testposition, coord(0, safety*2, 0), safety*2, testcollision, testdistance);
+                
                 // on ground
+                puts("checking for ground");
+                
+                body_find_contact(b, world, testposition, coord(0, safety*2, 0), safety*2, testcollision, testdistance);
+                
                 if(testdistance != INF)
                 {
                     testposition = coord(b.x, b.y-(step_size+safety), b.z);
-                    //puts("checking stairs from on ground");
+                    puts("checking stairs from on ground");
                     // check movement step_size above our target location (accounting for safety)
                     body_find_contact(b, world, testposition, motion*time, speed, testcollision, testdistance);
                     // didn't hit anything
@@ -3040,7 +3088,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                         body_find_contact(b, world, testposition+(motion*time), coord(0, step_size+safety, 0), step_size+safety, testcollision2, testdistance2);
                         if(testdistance2 != INF)
                         {
-                            if(-dot(coord(0,1,0),testcollision.normal) > 0.7)
+                            if(-dot(coord(0,1,0),testcollision2.normal) > 0.7)
                             {
                                 testposition.y += testdistance2;
                                 didstairs = true;
@@ -3329,12 +3377,13 @@ int main (int argc, char ** argv)
     
     
     add_box(128, -256, 96+128, units_per_meter);
-    add_box(128+16, -256+16, 96+128+16, units_per_meter);
-    add_box(128+32, -256+32, 96+128+32, units_per_meter);
     
     add_box(0, -128, 96, units_per_meter);
     add_box(0, -128+64, 96, units_per_meter);
     add_box(64, -128+64, 96, units_per_meter);
+    add_box(-16, -128+16, 96-32, units_per_meter);
+    add_box(-32, -128+32, 96-64, units_per_meter);
+    add_box(-48, -128+48, 96-96, units_per_meter);
     
     add_box(32, -96-64-128-64-32, 256-32, units_per_meter, 5);
     add_box(32, -96-64-128, 256-32, 128);
@@ -3389,26 +3438,28 @@ int main (int argc, char ** argv)
         auto newtime = glfwGetTime();
         auto frametime = (newtime-starttime);
         
-        if(0)
+        if(1)
         {
-            printf("Frametime: %.2fms\n"
+            printf(
+            "Frametime: %.2fms\n"
             "Possible framerate: %.2f\n"
             "live projectinoes %d\n"
             "time spent rendering %.2fms\n"
             "time spent broadphase %.2fms\n"
             "time spent searching %.2fms\n"
-            "time spent point-triangle colliding %.2fms\n"
-            "time spent line colliding %.2fms\n"
-            "time spent throwing %.2fms\n"
+            //"time spent point-triangle colliding %.2fms\n"
+            //"time spent line colliding %.2fms\n"
+            //"time spent throwing %.2fms\n"
             , frametime*1000
             , 1/frametime
             , shots.size()
             , time_spent_rendering*1000
             , time_spent_broadphase*1000
             , time_spent_searching*1000
-            , time_spent_triangle*1000
-            , time_spent_line*1000
-            , time_spent_throwing*1000);
+            //, time_spent_triangle*1000
+            //, time_spent_line*1000
+            //, time_spent_throwing*1000
+            );
             
             time_spent_broadphase = 0;
             time_spent_searching = 0;
@@ -3691,7 +3742,7 @@ int main (int argc, char ** argv)
         y = myself.body.y;
         z = myself.body.z;
         
-        //printf("frame end position %f %f %f\n", x, y, z);
+        printf("frame end position %f %f %f\n", x, y, z);
         
         static bool right_waspressed = false;
         if(glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)
@@ -3702,7 +3753,7 @@ int main (int argc, char ** argv)
                 puts("making box");
                 
                 double scatter_angle = 7;
-                int scatter_size = 2;
+                int scatter_size = 5;
                 for(int rx = -scatter_size; rx <= scatter_size; rx++)
                 {
                     for(int ry = -scatter_size; ry <= scatter_size; ry++)
