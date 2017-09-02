@@ -533,6 +533,8 @@ double rotation_z = 0;
 
 double units_per_meter = 64;
 double step_size = units_per_meter/4;
+double construct_stair_rise = units_per_meter/5;
+double construct_stair_run = units_per_meter/5*7/5;
 
 double gravity = 9.8*units_per_meter; // units per second per second
 //double shock = 5*units_per_meter; // units per second per impact
@@ -3417,9 +3419,9 @@ int main (int argc, char ** argv)
     add_box(0, -96-64-128, 256-32+128, 128);
     add_box(64, -96, 256, 256);
     
-    add_box(-512, 64, 256, 256);
+    add_box(-512, 64, 256, 128);
     for(int i = 1; i < 10; i++)
-        add_box(-512-i, 64-16*i, 256+16*i, 256);
+        add_box(-512-i, 64-construct_stair_rise*i, 256+construct_stair_run*i, 128);
     
     
     // second stack
@@ -3737,11 +3739,11 @@ int main (int argc, char ** argv)
         
         collider_throw(myself, world, delta, 0, true);
         
-        double speed = magnitude(coord(myself.body.xspeed, myself.body.yspeed, myself.body.zspeed))*delta;
+        double speed = magnitude(coord(myself.body.xspeed, 0, myself.body.zspeed))*delta;
         
         triangle newfloor = zero_triangle;
         double newdistance = INF;
-        body_find_contact(myself.body, world, coord(0,speed,0), speed, newfloor, newdistance);
+        body_find_contact(myself.body, world, coord(0,speed+step_size,0), speed+step_size, newfloor, newdistance);
         
         if(floor != zero_triangle and (newdistance > 1 or newfloor == zero_triangle) and !jumped)
         {
