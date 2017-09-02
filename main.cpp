@@ -1689,7 +1689,7 @@ struct renderer {
         double fx = 1/tan((a_fovx/2));
         double fy = 1/tan((a_fovy/2));
         double nearf = 1;
-        double farf = 10000;
+        double farf = 100000;
         float projection[16] = {
               fx, 0.0f, 0.0f, 0.0f,
             0.0f,   fy, 0.0f, 0.0f,
