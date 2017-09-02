@@ -3140,13 +3140,15 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 //printf("%f %f %f\n", asdfreg.x, asdfreg.y, asdfreg.z);
                 //puts("checking for ground");
                 
-                body_find_contact(b, world, testposition, coord(0, 1, 0), step_size+safety, testcollision, testdistance);
+                body_find_contact(b, world, testposition, coord(0, step_size+safety, 0), step_size+safety, testcollision, testdistance);
                 bool onground = (testdistance != INF);
                 
                 // not on ground, don't stairstep
                 if(onground)
                 {
-                    coord testmotion = coord(motion.x, 0, motion.z);
+                    //coord testmotion = coord(motion.x, 0, motion.z); // uncomment if stair code is making you enter floors
+                    coord testmotion = coord(motion.x, motion.y, motion.z); // comment if stair code si making you enter floors
+                    
                     double testmotiondistance = magnitude(testmotion)*time; // in units of motion per frame, "distance", not "speed"
                     if(testmotiondistance != 0)
                     {
