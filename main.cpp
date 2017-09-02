@@ -580,6 +580,8 @@ double sharpenamount = 0.35;
 int bloomradius = 8;
 int bloompasses = 2;
 
+int shadow_resolutioni = 1024;
+
 struct renderer {
     // TODO: FIXME: add a real reference counter
     struct texture {
@@ -1554,6 +1556,7 @@ struct renderer {
         }
     }
     
+    
     void cycle_start()
     {
         checkerr(__LINE__);
@@ -1749,6 +1752,17 @@ struct renderer {
     }
     void cycle_end()
     {
+        for(const auto & b : boxes)
+            draw_box(b);
+        for(const auto & c : cubemaps)
+            draw_cubemap(c);
+        for(const auto & t : terrains)
+            draw_terrain(t);
+        
+        boxes = {};
+        cubemaps = {};
+        terrains = {};
+        
         if(!postprocessing)
         {
             glBindFramebuffer(GL_READ_FRAMEBUFFER, FRBO);
@@ -1959,8 +1973,25 @@ struct renderer {
         glFinish();
         checkerr(__LINE__);
     }
-    void draw_box(texture * texture, double x, double y, double z, double scale, double yangle = 0)
+    struct scene_box {
+        texture * texture;
+        double x, y, z, scale, yangle;
+    };
+    std::vector<scene_box> boxes;
+    void display_box(texture * texture, double x, double y, double z, double scale, double yangle = 0)
     {
+        boxes.push_back({texture, x, y, z, scale, yangle});
+    }
+    
+    void draw_box(const scene_box & box)
+    {
+        texture * texture = box.texture;
+        double x = box.x;
+        double y = box.y;
+        double z = box.z;
+        double scale = box.scale;
+        double yangle = box.yangle;
+        
         yangle *= M_PI/180.0;
         
         glUseProgram(program);
@@ -2045,8 +2076,19 @@ struct renderer {
         //glDrawElements(GL_TRIANGLE_STRIP, sizeof(indexes2)/sizeof(indexes2[0]), GL_UNSIGNED_BYTE, 0);
         checkerr(__LINE__);
     }
-    void draw_cubemap(cubemap * map)
+    
+    struct scene_cubemap {
+        cubemap * map;
+    };
+    std::vector<scene_cubemap> cubemaps;
+    void display_cubemap(cubemap * map)
     {
+        cubemaps.push_back({map});
+    }
+    void draw_cubemap(const scene_cubemap & cube)
+    {
+        cubemap * map = cube.map;
+        
         glUseProgram(cubeprogram);
         glBindVertexArray(CubeVAO);
         glBindBuffer(GL_ARRAY_BUFFER, CubeVBO);
@@ -2077,8 +2119,32 @@ struct renderer {
         glDrawElements(GL_TRIANGLE_STRIP, sizeof(indexes)/sizeof(indexes[0]), GL_UNSIGNED_SHORT, 0);
         checkerr(__LINE__);
     }
-    void draw_terrain(texture * texture, vertex * terrain, int terrainsize, unsigned short * terrainindexes, int terrainindexessize, double x, double y, double z, double scale)
+    
+    struct scene_terrain {
+        texture * texture;
+        vertex * terrain;
+        int terrainsize;
+        unsigned short * terrainindexes;
+        int terrainindexessize;
+        double x, y, z, scale;
+    };
+    std::vector<scene_terrain> terrains;
+    void display_terrain(texture * texture, vertex * terrain, int terrainsize, unsigned short * terrainindexes, int terrainindexessize, double x, double y, double z, double scale)
     {
+        terrains.push_back({texture, terrain, terrainsize, terrainindexes, terrainindexessize, x, y, z, scale});
+    }
+    void draw_terrain(const scene_terrain & terr)
+    {
+        texture * texture = terr.texture;
+        vertex * terrain = terr.terrain;
+        int terrainsize = terr.terrainsize;
+        unsigned short * terrainindexes = terr.terrainindexes;
+        int terrainindexessize = terr.terrainindexessize;
+        double x = terr.x;
+        double y = terr.y;
+        double z = terr.z;
+        double scale = terr.scale;
+        
         glUseProgram(program);
         glBindVertexArray(TerrainVAO);
         glBindBuffer(GL_ARRAY_BUFFER, TerrainVBO);
@@ -3070,9 +3136,9 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 double testdistance = INF;
                 
                 // on ground
-                auto asdfreg = normalize(motion);
-                printf("%f %f %f\n", asdfreg.x, asdfreg.y, asdfreg.z);
-                puts("checking for ground");
+                //auto asdfreg = normalize(motion);
+                //printf("%f %f %f\n", asdfreg.x, asdfreg.y, asdfreg.z);
+                //puts("checking for ground");
                 
                 body_find_contact(b, world, testposition, coord(0, 1, 0), step_size+safety, testcollision, testdistance);
                 bool onground = (testdistance != INF);
@@ -3089,21 +3155,21 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                         
                         double step_run = min(step_size/2, testmotiondistance);
                         body_find_contact(b, world, testposition, testmotion, step_run, testcollision, testdistance);
-                        puts("checking stairs from on ground");
+                        //puts("checking stairs from on ground");
                         
                         if(testdistance == INF)
                         {
-                            puts("A");
+                            //puts("A");
                             testdistance = step_run; // wouldn't hit anything
                         }
                         else if(-dot(coord(0,1,0),testcollision.normal) > 0.7)
                         {
-                            puts("B");
+                            //puts("B");
                             testdistance = max(0, testdistance); // would land on a floor or slope
                         }
                         else
                         {
-                            puts("C");
+                            //puts("C");
                             testdistance = INF; // would hit a wall or ceiling
                         }
                         
@@ -3112,7 +3178,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                             // change test position to point of contact (if there was one) for the new step position
                             testposition = testposition + normalize(testmotion)*testdistance;
                             // make sure there's ground under the new position
-                            puts("testing for ground from stair step position");
+                            //puts("testing for ground from stair step position");
                             
                             triangle testcollision2 = zero_triangle;
                             double testdistance2 = INF;
@@ -3125,8 +3191,8 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                                     testdistance2 = max(0, testdistance2);
                                     testposition = testposition + coord(0, 1, 0)*testdistance2;
                                     
-                                    puts("did stairs");
-                                    printf("%f\n", testdistance);
+                                    //puts("did stairs");
+                                    //printf("%f\n", testdistance);
                                     
                                     b.x = testposition.x;
                                     b.y = testposition.y;
@@ -3775,7 +3841,7 @@ int main (int argc, char ** argv)
         y = myself.body.y;
         z = myself.body.z;
         
-        printf("frame end position %f %f %f\n", x, y, z);
+        //printf("frame end position %f %f %f\n", x, y, z);
         
         static bool right_waspressed = false;
         if(glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)
@@ -3841,13 +3907,13 @@ int main (int argc, char ** argv)
         myrenderer.cycle_start();
         
         for(const auto & s : shots)
-            myrenderer.draw_box(junk, s->c.body.x, s->c.body.y, s->c.body.z, shotsize);
+            myrenderer.display_box(junk, s->c.body.x, s->c.body.y, s->c.body.z, shotsize);
         for(const auto & b : boxes)
-            myrenderer.draw_box(wood, b->x, b->y, b->z, b->size, b->yangle);
+            myrenderer.display_box(wood, b->x, b->y, b->z, b->size, b->yangle);
         
-        myrenderer.draw_terrain(dirt, terrain, sizeof(terrain), terrainindexes, sizeof(terrainindexes), 0, 0, 0, 1);
+        myrenderer.display_terrain(dirt, terrain, sizeof(terrain), terrainindexes, sizeof(terrainindexes), 0, 0, 0, 1);
         
-        myrenderer.draw_cubemap(sky);
+        myrenderer.display_cubemap(sky);
         
         myrenderer.cycle_end();
         
