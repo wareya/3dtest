@@ -561,7 +561,7 @@ void m4mult(float * a, float * b)
     memcpy(a, output, sizeof(float)*16);
 }
 
-bool postprocessing = true;
+bool postprocessing = false;
 
 // diagonal fov
 double fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
@@ -3066,6 +3066,8 @@ void body_find_contact(const rigidbody & b, const worldstew & world, const coord
         }
         gooddistance -= safety;
     }
+    else
+        gooddistance = INF;
     
     end = glfwGetTime();
     time_spent_searching += end-start;
@@ -3127,64 +3129,71 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
         {
             refusedtohit = false;
             
+            // check for stairstepping
             bool didstairs = false;
-            if(dostairs)
+            if(dostairs and -dot(coord(0,1,0),goodcollision.normal) <= 0.7)
             {
-                // check for stairstepping
+                coord didmotion = normalize(motion)*gooddistance;
+                double didtime = time * gooddistance/speed;
+                double steptime = time - didtime;
+                
+                // throw to point of contact
                 auto testposition = coord(b.x, b.y, b.z);
-                triangle testcollision = zero_triangle;
-                double testdistance = INF;
+                testposition = testposition + didmotion;
                 
                 // on ground
                 //auto asdfreg = normalize(motion);
                 //printf("%f %f %f\n", asdfreg.x, asdfreg.y, asdfreg.z);
                 //puts("checking for ground");
                 
+                // check for ground
+                triangle testcollision = zero_triangle;
+                double testdistance = INF;
                 body_find_contact(b, world, testposition, coord(0, step_size+safety, 0), step_size+safety, testcollision, testdistance);
-                bool onground = (testdistance != INF);
-                
-                // not on ground, don't stairstep
-                if(onground)
+                testdistance = max(0, testdistance);
+                if(testdistance != INF)
                 {
-                    //coord testmotion = coord(motion.x, 0, motion.z); // uncomment if stair code is making you enter floors
-                    coord testmotion = coord(motion.x, motion.y, motion.z); // comment if stair code si making you enter floors
+                    // map to ground
+                    testposition = testposition + coord(0, 1, 0)*testdistance;
+                    //coord testmotion = coord(motion.x, motion.y, motion.z); // comment if stairs make you end up in the ground sometimes
+                    coord testmotion = coord(motion.x, 0, motion.z); // uncomment if stairs make you end up in the ground sometimes
                     
-                    double testmotiondistance = magnitude(testmotion)*time; // in units of motion per frame, "distance", not "speed"
-                    if(testmotiondistance != 0)
+                    double testmotiondistance = magnitude(testmotion)*steptime; // in units of motion per frame, "distance", not "speed"
+                    if(testmotiondistance != 0 and coord(motion.x, 0, motion.z) != coord()) // skip if no horizontal motion
                     {
-                        // check if raising ourselves by step_size would make us not hit anything horizontally
-                        testposition = coord(b.x, b.y-step_size, b.z);
+                        // raise ourselves by up to step_size
+                        body_find_contact(b, world, testposition, coord(0, -step_size, 0), step_size, testcollision, testdistance);
+                        testdistance = max(0, testdistance);
+                        if(testdistance == INF) testdistance = step_size;
+                        testposition = testposition - coord(0, testdistance, 0);
                         
+                        // check if this made it so we won't hit anything anymore
                         double step_run = min(step_size/2, testmotiondistance);
-                        body_find_contact(b, world, testposition, testmotion, step_run, testcollision, testdistance);
-                        //puts("checking stairs from on ground");
+                        body_find_contact(b, world, testposition, normalize(testmotion)*step_run, step_run, testcollision, testdistance);
                         
+                        //puts("checking stairs from on ground");
                         if(testdistance == INF)
                         {
                             //puts("A");
                             testdistance = step_run; // wouldn't hit anything
                         }
-                        else if(-dot(coord(0,1,0),testcollision.normal) > 0.7)
+                        else if(testdistance < safety*2)
                         {
                             //puts("B");
-                            testdistance = max(0, testdistance); // would land on a floor or slope
+                            testdistance = INF; // wouldn't improve our free horizontal motion
                         }
-                        else
-                        {
-                            //puts("C");
-                            testdistance = INF; // would hit a wall or ceiling
-                        }
+                        // otherwise would hit something but further away than without stepping
                         
                         if(testdistance != INF)
                         {
                             // change test position to point of contact (if there was one) for the new step position
                             testposition = testposition + normalize(testmotion)*testdistance;
                             // make sure there's ground under the new position
-                            //puts("testing for ground from stair step position");
+                            puts("testing for ground from stair step position");
                             
                             triangle testcollision2 = zero_triangle;
                             double testdistance2 = INF;
-                            body_find_contact(b, world, testposition, coord(0, step_size, 0), step_size, testcollision2, testdistance2);
+                            body_find_contact(b, world, testposition, coord(0, step_size+safety, 0), step_size+safety, testcollision2, testdistance2);
                             
                             if(testdistance2 != INF)
                             {
@@ -3193,18 +3202,19 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                                     testdistance2 = max(0, testdistance2);
                                     testposition = testposition + coord(0, 1, 0)*testdistance2;
                                     
-                                    //puts("did stairs");
-                                    //printf("%f\n", testdistance);
+                                    puts("did stairs");
+                                    printf("%f\n", testdistance);
+                                    printf("%f\n", testposition.y);
                                     
                                     b.x = testposition.x;
                                     b.y = testposition.y;
                                     b.z = testposition.z;
                                     
-                                    touching = {testcollision2};
-                                    //touching = {};
+                                    //touching = {testcollision2};
+                                    touching = {};
                                     
-                                    double airtime = time * testdistance/testmotiondistance;
-                                    double newtime = time - abs(airtime);
+                                    double airtime = steptime * testdistance/testmotiondistance;
+                                    double newtime = steptime - abs(airtime);
                                     time = newtime;
                                     
                                     didstairs = true;
