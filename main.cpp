@@ -3068,53 +3068,80 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 double testdistance = INF;
                 
                 // on ground
+                auto asdfreg = normalize(motion);
+                printf("%f %f %f\n", asdfreg.x, asdfreg.y, asdfreg.z);
                 puts("checking for ground");
                 
-                body_find_contact(b, world, testposition, coord(0, safety*2, 0), safety*2, testcollision, testdistance);
+                body_find_contact(b, world, testposition, coord(0, 1, 0), step_size+safety, testcollision, testdistance);
+                bool onground = (testdistance != INF);
                 
-                if(testdistance != INF)
+                // not on ground, don't stairstep
+                if(onground)
                 {
-                    testposition = coord(b.x, b.y-(step_size+safety), b.z);
-                    puts("checking stairs from on ground");
-                    // check movement step_size above our target location (accounting for safety)
-                    body_find_contact(b, world, testposition, motion*time, speed, testcollision, testdistance);
-                    // didn't hit anything
-                    if(testdistance == INF)
+                    coord testmotion = coord(motion.x, 0, motion.z);
+                    double testmotiondistance = magnitude(testmotion)*time; // in units of motion per frame, "distance", not "speed"
+                    if(testmotiondistance != 0)
                     {
-                        // make sure there's ground under the new position
-                        //puts("testing for ground");
-                        triangle testcollision2 = zero_triangle;
-                        double testdistance2 = INF;
-                        body_find_contact(b, world, testposition+(motion*time), coord(0, step_size+safety, 0), step_size+safety, testcollision2, testdistance2);
-                        if(testdistance2 != INF)
+                        // check if raising ourselves by step_size would make us not hit anything horizontally
+                        testposition = coord(b.x, b.y-step_size, b.z);
+                        
+                        double step_run = min(step_size/2, testmotiondistance);
+                        body_find_contact(b, world, testposition, testmotion, step_run, testcollision, testdistance);
+                        puts("checking stairs from on ground");
+                        
+                        if(testdistance == INF)
                         {
-                            if(-dot(coord(0,1,0),testcollision2.normal) > 0.7)
+                            puts("A");
+                            testdistance = step_run; // wouldn't hit anything
+                        }
+                        else if(-dot(coord(0,1,0),testcollision.normal) > 0.7)
+                        {
+                            puts("B");
+                            testdistance = max(0, testdistance); // would land on a floor or slope
+                        }
+                        else
+                        {
+                            puts("C");
+                            testdistance = INF; // would hit a wall or ceiling
+                        }
+                        
+                        if(testdistance != INF)
+                        {
+                            // change test position to point of contact (if there was one) for the new step position
+                            testposition = testposition + normalize(testmotion)*testdistance;
+                            // make sure there's ground under the new position
+                            puts("testing for ground from stair step position");
+                            
+                            triangle testcollision2 = zero_triangle;
+                            double testdistance2 = INF;
+                            body_find_contact(b, world, testposition, coord(0, step_size, 0), step_size, testcollision2, testdistance2);
+                            
+                            if(testdistance2 != INF)
                             {
-                                testposition.y += testdistance2;
-                                didstairs = true;
+                                if(-dot(coord(0,1,0),testcollision2.normal) > 0.7)
+                                {
+                                    testdistance2 = max(0, testdistance2);
+                                    testposition = testposition + coord(0, 1, 0)*testdistance2;
+                                    
+                                    puts("did stairs");
+                                    printf("%f\n", testdistance);
+                                    
+                                    b.x = testposition.x;
+                                    b.y = testposition.y;
+                                    b.z = testposition.z;
+                                    
+                                    touching = {testcollision2};
+                                    //touching = {};
+                                    
+                                    double airtime = time * testdistance/testmotiondistance;
+                                    double newtime = time - abs(airtime);
+                                    time = newtime;
+                                    
+                                    didstairs = true;
+                                }
                             }
                         }
                     }
-                    // hit a slope
-                    else if(testdistance > gooddistance and -dot(coord(0,1,0),testcollision.normal) > 0.7)
-                    {
-                        didstairs = true;
-                    }
-                    if(didstairs)
-                    {
-                        testdistance = max(0, testdistance);
-                        testposition = testposition + (motion*time);
-                        b.x = testposition.x;
-                        b.y = testposition.y;
-                        b.z = testposition.z;
-                        
-                        touching = {goodcollision};
-                        
-                        double airtime = testdistance/speed*time;
-                        double newtime = time - abs(airtime);
-                        time = newtime;
-                    }
-                    //puts("done checking stairs");
                 }
             }
             
@@ -3390,6 +3417,10 @@ int main (int argc, char ** argv)
     add_box(0, -96-64-128, 256-32+128, 128);
     add_box(64, -96, 256, 256);
     
+    add_box(-512, 64, 256, 256);
+    for(int i = 1; i < 10; i++)
+        add_box(-512-i, 64-16*i, 256+16*i, 256);
+    
     
     // second stack
     add_box(128+256, -96, 256, 256, 20);
@@ -3438,7 +3469,7 @@ int main (int argc, char ** argv)
         auto newtime = glfwGetTime();
         auto frametime = (newtime-starttime);
         
-        if(1)
+        if(0)
         {
             printf(
             "Frametime: %.2fms\n"
