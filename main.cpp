@@ -3169,7 +3169,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                         if(testdistance == INF) testdistance = (step_size+safety);
                         testposition = testposition - coord(0, testdistance, 0);
                         
-                        printf("raised by %f out of %f\n", testdistance, (step_size+safety));
+                        if(false) printf("raised by %f out of %f\n", testdistance, (step_size+safety));
                         
                         // check if this made it so we won't hit anything anymore
                         double step_run = min(step_size/2, testmotiondistance);
@@ -3177,17 +3177,17 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                         testdistance = max(0, testdistance);
                         
                         auto asdge = normalize(testmotion)*step_run;
-                        printf("test motion %f %f %f\n", asdge.x, asdge.y, asdge.z);
+                        if(false) printf("test motion %f %f %f\n", asdge.x, asdge.y, asdge.z);
                         
                         //puts("checking stairs from on ground");
                         if(testdistance == INF)
                         {
-                            puts("A");
+                            if(false) puts("A");
                             testdistance = step_run; // wouldn't hit anything
                         }
                         else if(testdistance < safety and -dot(coord(0,1,0),testcollision.normal) <= 0.7)
                         {
-                            puts("B");
+                            if(false) puts("B");
                             testdistance = INF; // wouldn't improve our free motion
                         }
                         // otherwise would hit something but further away than without stepping
@@ -3197,7 +3197,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                             // change test position to point of contact (if there was one) for the new step position
                             testposition = testposition + normalize(testmotion)*testdistance;
                             // make sure there's ground under the new position
-                            puts("testing for ground from stair step position");
+                            if(false) puts("testing for ground from stair step position");
                             
                             triangle testcollision2 = zero_triangle;
                             double testdistance2 = INF;
@@ -3210,9 +3210,9 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                                 {
                                     testposition = testposition + coord(0, testdistance2, 0);
                                     
-                                    puts("did stairs");
-                                    printf("%f\n", testdistance);
-                                    printf("%f\n", testdistance2);
+                                    if(false) puts("did stairs");
+                                    if(false) printf("%f\n", testdistance);
+                                    if(false) printf("%f\n", testdistance2);
                                     
                                     b.x = testposition.x;
                                     b.y = testposition.y;
