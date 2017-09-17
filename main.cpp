@@ -3155,7 +3155,6 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 {
                     // map to ground
                     testposition = testposition + coord(0, testdistance, 0);
-                    // FIXME: There is still a bug around here somewhere!
                     //coord testmotion = coord(motion.x, motion.y, motion.z);
                     coord testmotion = coord(motion.x, 0, motion.z);
                     //testmotion = reject(testmotion, testcollision.normal);
@@ -3836,13 +3835,14 @@ int main (int argc, char ** argv)
         triangle newfloor = zero_triangle;
         double newdistance = INF;
         body_find_contact(myself.body, world, coord(0,speed+step_size,0), speed+step_size, newfloor, newdistance);
+        newdistance = max(newdistance, 0);
         
-        if(floor != zero_triangle and (newdistance > 1 or newfloor == zero_triangle) and !jumped)
+        if(floor != zero_triangle and -dot(coord(0,1,0), newfloor.normal) > 0.7 and (newdistance > 0 or newfloor == zero_triangle) and !jumped)
         {
             // stick to floor
             if(newdistance != INF and -dot(coord(0,1,0), floor.normal) > 0.7) // ~45.57 degrees not exactly 45
             {
-                //puts("asdf");
+                //printf("clamping to floor %f\n", newdistance);
                 coord velocity = coord(myself.body.xspeed, myself.body.yspeed, myself.body.zspeed);
                 velocity = reject(velocity, floor.normal);
                 myself.body.xspeed = velocity.x;
@@ -3853,7 +3853,7 @@ int main (int argc, char ** argv)
             // run off ledge
             else
             {
-                //puts("wasdrghd");
+                puts("wasdrghd");
                 myself.body.yspeed = 0;
             }
         }
