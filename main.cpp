@@ -2379,8 +2379,10 @@ void octnode<T>::potentials(const coord & minima, const coord & maxima, std::vec
 {
     if(contents == 0) return;
     #if 0
-    dummy_union(ret, outertags);
-    dummy_union(ret, tags);
+    for(const auto & e : outertags)
+        sorted_insert(ret, e);
+    for(const auto & e : tags)
+        sorted_insert(ret, e);
     return;
     #endif
     // include alien objects if we're the root node and the object looking for stuff is not entirely inside us
@@ -3109,7 +3111,6 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
         if(iters%10 == 0)
             printf("iters %d speed %f\n", iters, speed);
         
-        
         if(motion == coord())
         {
             if(false)if(debughard) puts("still, breaking");
@@ -3131,15 +3132,14 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
             
             // check for stairstepping
             bool didstairs = false;
-            if(dostairs and -dot(coord(0,1,0),goodcollision.normal) <= 0.7)
+            if(dostairs and -dot(coord(0,1,0),goodcollision.normal) <= 0.7 and speed > 0)
             {
-                coord didmotion = normalize(motion)*gooddistance;
                 double didtime = time * gooddistance/speed;
                 double steptime = time - didtime;
                 
                 // throw to point of contact
                 auto testposition = coord(b.x, b.y, b.z);
-                testposition = testposition + didmotion;
+                testposition = testposition + motion*didtime;
                 
                 // on ground
                 //auto asdfreg = normalize(motion);
@@ -3154,33 +3154,41 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 if(testdistance != INF)
                 {
                     // map to ground
-                    testposition = testposition + coord(0, 1, 0)*testdistance;
-                    //coord testmotion = coord(motion.x, motion.y, motion.z); // comment if stairs make you end up in the ground sometimes
-                    coord testmotion = coord(motion.x, 0, motion.z); // uncomment if stairs make you end up in the ground sometimes
+                    testposition = testposition + coord(0, testdistance, 0);
+                    // FIXME: There is still a bug around here somewhere!
+                    //coord testmotion = coord(motion.x, motion.y, motion.z);
+                    coord testmotion = coord(motion.x, 0, motion.z);
+                    //testmotion = reject(testmotion, testcollision.normal);
                     
                     double testmotiondistance = magnitude(testmotion)*steptime; // in units of motion per frame, "distance", not "speed"
-                    if(testmotiondistance != 0 and coord(motion.x, 0, motion.z) != coord()) // skip if no horizontal motion
+                    if(testmotiondistance != 0) // skip if no motion
                     {
                         // raise ourselves by up to step_size
-                        body_find_contact(b, world, testposition, coord(0, -step_size, 0), step_size, testcollision, testdistance);
+                        body_find_contact(b, world, testposition, coord(0, -(step_size+safety), 0), (step_size+safety), testcollision, testdistance);
                         testdistance = max(0, testdistance);
-                        if(testdistance == INF) testdistance = step_size;
+                        if(testdistance == INF) testdistance = (step_size+safety);
                         testposition = testposition - coord(0, testdistance, 0);
+                        
+                        printf("raised by %f out of %f\n", testdistance, (step_size+safety));
                         
                         // check if this made it so we won't hit anything anymore
                         double step_run = min(step_size/2, testmotiondistance);
                         body_find_contact(b, world, testposition, normalize(testmotion)*step_run, step_run, testcollision, testdistance);
+                        testdistance = max(0, testdistance);
+                        
+                        auto asdge = normalize(testmotion)*step_run;
+                        printf("test motion %f %f %f\n", asdge.x, asdge.y, asdge.z);
                         
                         //puts("checking stairs from on ground");
                         if(testdistance == INF)
                         {
-                            //puts("A");
+                            puts("A");
                             testdistance = step_run; // wouldn't hit anything
                         }
-                        else if(testdistance < safety*2)
+                        else if(testdistance < safety and -dot(coord(0,1,0),testcollision.normal) <= 0.7)
                         {
-                            //puts("B");
-                            testdistance = INF; // wouldn't improve our free horizontal motion
+                            puts("B");
+                            testdistance = INF; // wouldn't improve our free motion
                         }
                         // otherwise would hit something but further away than without stepping
                         
@@ -3194,30 +3202,36 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                             triangle testcollision2 = zero_triangle;
                             double testdistance2 = INF;
                             body_find_contact(b, world, testposition, coord(0, step_size+safety, 0), step_size+safety, testcollision2, testdistance2);
+                            testdistance2 = max(0, testdistance2);
                             
                             if(testdistance2 != INF)
                             {
                                 if(-dot(coord(0,1,0),testcollision2.normal) > 0.7)
                                 {
-                                    testdistance2 = max(0, testdistance2);
-                                    testposition = testposition + coord(0, 1, 0)*testdistance2;
+                                    testposition = testposition + coord(0, testdistance2, 0);
                                     
                                     puts("did stairs");
                                     printf("%f\n", testdistance);
-                                    printf("%f\n", testposition.y);
+                                    printf("%f\n", testdistance2);
                                     
                                     b.x = testposition.x;
                                     b.y = testposition.y;
                                     b.z = testposition.z;
+                                    
+                                    //testmotion = reject(testmotion, testcollision2.normal);
+                                    //b.xspeed = testmotion.x;
+                                    //b.yspeed = testmotion.y;
+                                    //b.zspeed = testmotion.z;
                                     
                                     //touching = {testcollision2};
                                     touching = {};
                                     
                                     double airtime = steptime * testdistance/testmotiondistance;
                                     double newtime = steptime - abs(airtime);
-                                    time = newtime;
+                                    time = newtime; // FIXME: setting this to 0 fixes the bug, find out why
                                     
                                     didstairs = true;
+                                    reached = true;
                                 }
                             }
                         }
@@ -3229,7 +3243,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
             {
                 auto p = goodcollision;
                 
-                double airtime = gooddistance/speed*time;
+                double airtime = time * gooddistance/speed;
                 double newtime = time - abs(airtime);
                 
                 for(unsigned int j = 0; j < touching.size(); j++)
@@ -3585,7 +3599,7 @@ int main (int argc, char ** argv)
         newtime = glfwGetTime();
         frametime = (newtime-starttime);
         
-        constexpr double throttle = 1.0/60;
+        constexpr double throttle = 1.0/125;
         if(frametime < throttle)
         {
             std::this_thread::sleep_for(std::chrono::duration<double>(throttle-frametime));
