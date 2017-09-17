@@ -2917,6 +2917,63 @@ void insert_prism_oct_body(double x, double y, double z, double radius, double t
 }
 
 template <typename T>
+void insert_prism_ngon_body(double x, double y, double z, double radius, const int sides, double top, double bottom, T & collisionstew)
+{
+    if(sides < 3) return;
+    
+    int caplines = sides*2;
+    
+    coord mypoints[sides*2];
+    int n = 0;
+    for(int i = 0; i < sides; i++)
+    {
+        double r = (i+0.5)*(360.0f/sides)/180*M_PI;
+        double forwards = cos(r)*radius;
+        double rightwards = sin(r)*radius;
+        //printf("%f %f\n", forwards, rightwards);
+        mypoints[n++] = coord(rightwards+x, top+y, forwards+z);
+        mypoints[n++] = coord(rightwards+x, bottom+y, forwards+z);
+    }
+    
+    // insert triangles
+    
+    // sides strip
+    for(int i = 0; i < caplines; i++)
+        collisionstew.insert(triholder(mypoints[i], mypoints[(i+1)%caplines], mypoints[(i+2)%caplines], !(i&1)));
+    // top(?) fan
+    coord start = mypoints[0];
+    for(int i = 1; i < sides-1; i++)
+        collisionstew.insert(triholder(start, mypoints[(i*2)%caplines], mypoints[((i+1)*2)%caplines], true));
+    // bottom(?) fan
+    start = mypoints[1];
+    for(int i = 1; i < sides-1; i++)
+        collisionstew.insert(triholder(start, mypoints[((i*2)+1)%caplines], mypoints[((i+1)*2+1)%caplines], false));
+    
+    // insert lines
+    
+    for(int i = 0; i < caplines; i+=2)
+    {
+        // sides are flat so this doesn't change anything
+        auto prenormal = triangle(mypoints[(i-1+caplines)%caplines], mypoints[i], mypoints[i+1]).normal;
+        auto postnormal = triangle(mypoints[i+1], mypoints[i], mypoints[(i+2)%caplines]).normal; // inverted
+        
+        //vertical
+        collisionstew.insert(lineholder(mypoints[i], mypoints[i+1], prenormal, postnormal));
+        // horizontal top
+        collisionstew.insert(lineholder(mypoints[i], mypoints[(i+2)%caplines], postnormal, coord(0,-1,0)));
+        // horizontal bottom
+        // not made from the same vertices but the triangle they would make has the same normal
+        collisionstew.insert(lineholder(mypoints[(i+1)%caplines], mypoints[(i+3)%caplines], postnormal, coord(0,1,0)));
+    }
+    
+    // insert points
+    
+    for(int i = 0; i < caplines; i++)
+        collisionstew.insert(mypoints[i]);
+        
+}
+
+template <typename T>
 void insert_box_body(double x, double y, double z, double diameter, double top, double bottom, T & collisionstew, double yangle = 0)
 {
     double radius = diameter*sqrt(2);
@@ -3240,7 +3297,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
             
             if(!didstairs)
             {
-                auto p = goodcollision;
+                auto & p = goodcollision;
                 
                 double airtime = time * gooddistance/speed;
                 double newtime = time - abs(airtime);
@@ -3278,7 +3335,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 touching.push_back(p);
                 
                 // FIXME: handle seams
-                if(last_collision != zero_triangle)
+                if(last_collision != zero_triangle and friction > 0)
                 {
                     auto contact_direction = last_collision.normal;
                     
@@ -3424,7 +3481,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
             if(time > 0)
             {
                 // FIXME: handle seams
-                if(last_collision != zero_triangle)
+                if(last_collision != zero_triangle and friction > 0)
                 {
                     auto contact_direction = normalize(last_collision.normal);
                     auto motion = coord({b.xspeed, b.yspeed, b.zspeed});
@@ -3544,11 +3601,11 @@ int main (int argc, char ** argv)
     //myself.body.maxima = coord(0, height-offset, 0);
     
     //void insert_prism_oct_body(double x, double y, double z, double radius, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic)
-    insert_prism_oct_body(0, -offset, 0, 0.5*units_per_meter, 0, height, myself.body.collision);
+    //insert_prism_oct_body(0, -offset, 0, 0.5*units_per_meter, 0, height, myself.body.collision);
+    insert_prism_ngon_body(0, -offset, 0, 0.5*units_per_meter, 16, 0, height, myself.body.collision);
     //insert_prism_oct_body(0, 0, 0, 32, 0, 32, myself.body.triangles, myself.body.points, false);
     myself.body.minima = make_minima(myself.body.collision.points);
     myself.body.maxima = make_maxima(myself.body.collision.points);
-    
     
     double time_spent_rendering = 0;
     while(!glfwWindowShouldClose(win))
@@ -3598,7 +3655,7 @@ int main (int argc, char ** argv)
         newtime = glfwGetTime();
         frametime = (newtime-starttime);
         
-        constexpr double throttle = 1.0/125;
+        constexpr double throttle = 1.0/120;
         if(frametime < throttle)
         {
             std::this_thread::sleep_for(std::chrono::duration<double>(throttle-frametime));
@@ -3837,24 +3894,29 @@ int main (int argc, char ** argv)
         body_find_contact(myself.body, world, coord(0,speed+step_size,0), speed+step_size, newfloor, newdistance);
         newdistance = max(newdistance, 0);
         
-        if(floor != zero_triangle and -dot(coord(0,1,0), newfloor.normal) > 0.7 and (newdistance > 0 or newfloor == zero_triangle) and !jumped)
+        if(floor != zero_triangle and -dot(coord(0,1,0), floor.normal) > 0.7 and (newdistance > safety) and !jumped)
         {
             // stick to floor
-            if(newdistance != INF and -dot(coord(0,1,0), floor.normal) > 0.7) // ~45.57 degrees not exactly 45
+            if(newdistance != INF and -dot(coord(0,1,0), newfloor.normal) > 0.7) // ~45.57 degrees not exactly 45
             {
                 //printf("clamping to floor %f\n", newdistance);
+                
                 coord velocity = coord(myself.body.xspeed, myself.body.yspeed, myself.body.zspeed);
                 velocity = reject(velocity, floor.normal);
-                myself.body.xspeed = velocity.x;
+                
+                // FIXME: should we map x/zspeed here too?
+                //myself.body.xspeed = velocity.x;
                 myself.body.yspeed = velocity.y;
-                myself.body.zspeed = velocity.z;
+                //myself.body.zspeed = velocity.z;
+                
                 myself.body.y += newdistance;
             }
             // run off ledge
             else
             {
-                puts("wasdrghd");
-                myself.body.yspeed = 0;
+                printf("wasdrghd %f\n", myself.body.yspeed);
+                myself.body.yspeed = max(0, myself.body.yspeed);
+                printf("wasdrghd2 %f\n", myself.body.yspeed);
             }
         }
         
