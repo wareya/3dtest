@@ -903,7 +903,6 @@ struct renderer {
     {
         if(postprocessing) viewportscale = viewPortRes;
         else viewportscale = 1.0f;
-        glfwSwapInterval(0);
         
         
         if(!glfwInit()) puts("glfw failed to init"), exit(0);
@@ -917,6 +916,8 @@ struct renderer {
         
         if(!win) puts("glfw failed to init"), exit(0);
         glfwMakeContextCurrent(win);
+        
+        glfwSwapInterval(0);
         
         if(gl3wInit()) puts("gl3w failed to init"), exit(0);
         
@@ -1968,6 +1969,7 @@ struct renderer {
         checkerr(__LINE__);
         
         checkerr(__LINE__);
+        glfwSwapInterval(0);
         glfwSwapBuffers(win);
         checkerr(__LINE__);
         glFinish();
@@ -3654,21 +3656,24 @@ int main (int argc, char ** argv)
         
         newtime = glfwGetTime();
         frametime = (newtime-starttime);
+        //printf("fps %f\n", 1/frametime);
         
         constexpr double throttle = 1.0/120;
         if(frametime < throttle)
         {
-            std::this_thread::sleep_for(std::chrono::duration<double>(throttle-frametime));
+            //std::this_thread::sleep_for(std::chrono::duration<double>(throttle-frametime));
+            while(glfwGetTime()-starttime < throttle);
             delta = throttle;
             oldtime = starttime;
             starttime = glfwGetTime();
         }
         else
         {
-            starttime = glfwGetTime();
-            //delta = starttime-oldtime;
+            //starttime = newtime;//glfwGetTime();
+            //delta = frametime;
             delta = throttle;
-            oldtime = starttime;
+            starttime = newtime;
+            oldtime = newtime;
         }
         
         glfwPollEvents();
