@@ -3781,7 +3781,8 @@ int main (int argc, char ** argv)
         body_find_contact(myself.body, world, coord(0,1,0), 1, floor, distance);
         static triangle lastfloor = floor;
         bool jumped = false;
-        double jumpspeed = -5*units_per_meter;
+        // FIXME: give some kind of subframe behavior to jumping so that the bunnyhopping "interval" is fully framerate independent
+        double jumpspeed = -4.9*units_per_meter; // ~4.9 gives 1 second jump times with 9.8m/s gravity.
         double walkspeed = 6.5*units_per_meter;//4*units_per_meter;
         
         if(glfwGetKey(win, GLFW_KEY_SPACE) and floor != zero_triangle)
