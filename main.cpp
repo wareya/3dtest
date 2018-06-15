@@ -524,7 +524,7 @@ void error_callback(int error, const char* description)
 }
 
 double x = 0;
-double y = -256;
+double y = -300;
 double z = 0;
 
 double rotation_x = 0;
@@ -1023,7 +1023,7 @@ struct renderer {
         mainprogram(vshader, fshader, program, 
         "#version 330 core\n\
         uniform mat4 projection; // world and view transform\n\
-        uniform mat4 translation; // object transform\n\
+        uniform mat4 model; // model transform\n\
         layout (location = 0) in vec3 aPos;\n\
         layout (location = 1) in vec2 aTex;\n\
         layout (location = 2) in vec3 aNormal;\n\
@@ -1031,9 +1031,10 @@ struct renderer {
         out vec3 myNormal;\n\
         void main()\n\
         {\n\
-            gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0) * translation * projection;\n\
+            gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0) * model * projection;\n\
             myTexCoord = aTex;\n\
-            myNormal = aNormal;\n\
+            mat3 rotation = mat3(model);\n\
+            myNormal = aNormal * rotation;\n\
         }\n",
         
         "#version 330 core\n\
@@ -2067,7 +2068,7 @@ struct renderer {
         
         m4mult(translation, rotation_y);
         
-        glUniformMatrix4fv(glGetUniformLocation(program, "translation"), 1, 0, translation);
+        glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, 0, translation);
         glUniform1i(glGetUniformLocation(program, "boost"), texture->boost);
         glBindTexture(GL_TEXTURE_2D, texture->texid);
         
@@ -2167,11 +2168,12 @@ struct renderer {
              0.0f,  0.0f, 0.0f, 1.0f
         };
         
-        glUniformMatrix4fv(glGetUniformLocation(program, "translation"), 1, 0, translation);
+        glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, 0, translation);
         glUniform1i(glGetUniformLocation(program, "boost"), texture->boost);
         glBindTexture(GL_TEXTURE_2D, texture->texid);
         
-        glDrawElements(GL_TRIANGLE_STRIP, terrainindexessize/sizeof(terrainindexes[0]), GL_UNSIGNED_SHORT, 0);
+        glDrawElements(GL_TRIANGLE_FAN, terrainindexessize/sizeof(terrainindexes[0]), GL_UNSIGNED_SHORT, 0);
+        //glDrawElements(GL_TRIANGLE_STRIP, terrainindexessize/sizeof(terrainindexes[0]), GL_UNSIGNED_SHORT, 0);
         
         checkerr(__LINE__);
     }
@@ -2621,8 +2623,27 @@ void rigidbody_cast_virtual_triangle(const collisionstew & body, const coord & p
 
 const static int terrainsize = 64; // dimensions of terrain
 const static int terrainscale = 64; // scale of each quad in terrain
-vertex terrain[terrainsize*terrainsize];
-unsigned short terrainindexes[(terrainsize*2+1)*(terrainsize-1)];
+vertex terrain[terrainsize*terrainsize + (terrainsize-1)*(terrainsize-1)];
+const static int terrain_firstinterp = terrainsize*terrainsize;
+unsigned short terrainindexes[(terrainsize-1)*(terrainsize-1)*7];
+
+vertex average_verts(const vertex & a, const vertex & b, const vertex & c, const vertex & d)
+{
+    vertex e;
+    
+    e.x = (a.x+b.x+c.x+d.x)/4;
+    e.y = (a.y+b.y+c.y+d.y)/4;
+    e.z = (a.z+b.z+c.z+d.z)/4;
+    
+    e.u = (a.u+b.u+c.u+d.u)/4;
+    e.v = (a.v+b.v+c.v+d.v)/4;
+    
+    e.nx = (a.nx+b.nx+c.nx+d.nx)/4;
+    e.ny = (a.ny+b.ny+c.ny+d.ny)/4;
+    e.nz = (a.nz+b.nz+c.nz+d.nz)/4;
+    
+    return e;
+}
 
 void generate_terrain()
 {
@@ -2704,10 +2725,40 @@ void generate_terrain()
     
     // 65535
     int i = 0;
+    int j = 0;
     for(int row = 0; row < terrainsize-1; row++)
     {
-        for(int x = 0; x < terrainsize; x++) for(int y = 0; y < 2; y++) terrainindexes[i++] = x+(y+row)*terrainsize;
-        terrainindexes[i++] = 65535;
+        for(int x = 0; x < terrainsize-1; x++)
+        {
+            int centerindex = terrain_firstinterp + j++;
+            
+            terrainindexes[i++] = centerindex;
+            terrainindexes[i++] = 0+x+(0+row)*terrainsize;
+            terrainindexes[i++] = 0+x+(1+row)*terrainsize;
+            terrainindexes[i++] = 1+x+(1+row)*terrainsize;
+            terrainindexes[i++] = 1+x+(0+row)*terrainsize;
+            terrainindexes[i++] = 0+x+(0+row)*terrainsize;
+            terrainindexes[i++] = 65535;
+            
+            /*
+            if((row^x)&1)
+            {
+                for(int y = 0; y < 2; y++)
+                    terrainindexes[i++] = x+(y+row)*terrainsize;
+                for(int y = 0; y < 2; y++)
+                    terrainindexes[i++] = x+1+(y+row)*terrainsize;
+            }
+            else
+            {
+                for(int y = 1; y >= 0; y--)
+                {
+                    terrainindexes[i++] = x+(y+row)*terrainsize;
+                    terrainindexes[i++] = x+1+(y+row)*terrainsize;
+                }
+            }
+            terrainindexes[i++] = 65535;
+            */
+        }
     }
     
     // insert triangles and diagonal lines
@@ -2719,20 +2770,55 @@ void generate_terrain()
             auto rb = terrain[x  +(y+1)*terrainsize];
             auto rc = terrain[x+1+(y  )*terrainsize];
             auto rd = terrain[x+1+(y+1)*terrainsize];
+            
+            int centerindex = x+y*(terrainsize-1) + terrain_firstinterp;
+            terrain[centerindex] = average_verts(ra, rb, rc, rd);
+            
+            auto re = terrain[centerindex];
+            
+            /*
+            // ccw on this image
             // a---c
-            // |  /|
-            // | / |
-            // |/  |
+            // |\ /|
+            // | X |
+            // |/ \|
             // b---d
-            auto t1 = triholder(ra, rb, rc);
-            auto t2 = triholder(rc, rb, rd);
+            auto t1 = ((x^y)&1)?triholder(ra, rb, rc):triholder(ra, rb, rd);
+            auto t2 = ((x^y)&1)?triholder(rc, rb, rd):triholder(rc, ra, rd);
             
             world.insert(t1);
             world.insert(t2);
             
-            auto myline = lineholder(rb, rc, t1.tri.normal, t2.tri.normal);
+            auto line1 = ((x^y)&1)?lineholder(rb, rc, t1.tri.normal, t2.tri.normal):lineholder(ra, rd, t1.tri.normal, t2.tri.normal);
             
-            world.insert(myline);
+            world.insert(line1);
+            */
+            
+            // ccw on this image
+            // a---c
+            // |\2/|
+            // |1e3|
+            // |/4\|
+            // b---d
+            auto t1 = triholder(ra, rb, re);
+            auto t2 = triholder(ra, re, rc);
+            auto t3 = triholder(rc, re, rd);
+            auto t4 = triholder(re, rb, rd);
+            
+            world.insert(t1);
+            world.insert(t2);
+            world.insert(t3);
+            world.insert(t4);
+            
+            auto line1 = lineholder(ra, re, t1.tri.normal, t2.tri.normal);
+            auto line2 = lineholder(rb, re, t1.tri.normal, t4.tri.normal);
+            auto line3 = lineholder(rc, re, t3.tri.normal, t2.tri.normal);
+            auto line4 = lineholder(rd, re, t3.tri.normal, t4.tri.normal);
+            
+            world.insert(line1);
+            world.insert(line2);
+            world.insert(line3);
+            world.insert(line4);
             
         }
     }
@@ -2747,21 +2833,21 @@ void generate_terrain()
             std::vector<coord> normals;
             normals.reserve(2);
             
-            //     a---c
-            //    /|  /
-            //   / | /
-            //  /  |/
-            // d---b
+            //     a
+            //    /|\ -
+            //  e1 | e2
+            //    \|/
+            //     b
             if(x > 0)
             {
-                auto rd = terrain[x-1+(y+1)*terrainsize];
-                auto tri = triangle(ra, rd, rb); // correspond to c, b, d in the triangle loop
+                auto re1 = terrain[x-1+y*(terrainsize-1) + terrain_firstinterp];
+                auto tri = triangle(ra, re1, rb);
                 normals.push_back(tri.normal);
             }
             if(x < terrainsize-1)
             {
-                auto rc = terrain[x+1+(y  )*terrainsize];
-                auto tri = triangle(ra, rb, rc);
+                auto re2 = terrain[x+y*(terrainsize-1) + terrain_firstinterp];
+                auto tri = triangle(ra, rb, re2);
                 normals.push_back(tri.normal);
             }
             
@@ -2770,7 +2856,12 @@ void generate_terrain()
             if(normals.size() == 1)
             {
                 n1 = normals[0];
-                n2 = normals[0];
+                //n2 = normals[0]*-1;
+                if(x == 0)
+                    n2 = coord(-1, 0, 0);
+                else
+                    n2 = coord(1, 0, 0);
+                    
             }
             else
             {
@@ -2794,25 +2885,21 @@ void generate_terrain()
             std::vector<coord> normals;
             normals.reserve(2);
             
-            //     d
-            //    /|
-            //   / |
-            //  /  |
+            //   e1
+            //  / \ -
             // a---b
-            // |  /
-            // | /
-            // |/
-            // c
+            //  \ /
+            //   e2
             if(y > 0)
             {
-                auto rc = terrain[x  +(y+1)*terrainsize];
-                auto tri = triangle(ra, rc, rb);
+                auto re1 = terrain[x+(y-1)*(terrainsize-1) + terrain_firstinterp];
+                auto tri = triangle(ra, rb, re1);
                 normals.push_back(tri.normal);
             }
             if(y < terrainsize-1)
             {
-                auto rd = terrain[x+1+(y-1)*terrainsize];
-                auto tri = triangle(rd, ra, rb);
+                auto re2 = terrain[x+y*(terrainsize-1) + terrain_firstinterp];
+                auto tri = triangle(ra, re2, rb);
                 normals.push_back(tri.normal);
             }
             
@@ -2821,7 +2908,11 @@ void generate_terrain()
             if(normals.size() == 1)
             {
                 n1 = normals[0];
-                n2 = normals[0];
+                //n2 = normals[0]*-1;
+                if(y == 0)
+                    n2 = coord(0, 0, 1);
+                else
+                    n2 = coord(0, 0, -1);
             }
             else
             {
@@ -2839,9 +2930,13 @@ void generate_terrain()
     {
         for(int x = 0; x < terrainsize; x++)
         {
-            auto ra = terrain[x  +(y  )*terrainsize];
-            
+            auto ra = terrain[x+y*terrainsize];
             world.insert(ra);
+            if(y < terrainsize-1 and x < terrainsize-1)
+            {
+                auto re = terrain[x+y*(terrainsize-1) + terrain_firstinterp];
+                world.insert(re);
+            }
         }
     }
 }
@@ -3039,8 +3134,6 @@ void add_box(double x, double y, double z, double size, double yangle = 0)
 double shotsize = 8;
 
 constexpr double safety = 0.01;
-//constexpr double safety_bounce = 0;
-constexpr double friction_gap = 1;
 
 // checks whether the given body, if placed at the given position, would collide with the given worldstew
 // true if in contact
@@ -3139,7 +3232,7 @@ void body_find_contact(const rigidbody & b, const worldstew & world, const coord
     body_find_contact(b, world, position, motion, speed, goodcollision, gooddistance);
 }
 
-void collider_throw(collider & c, const worldstew & world, const double & delta, const double & friction, bool dostairs = false)
+void collider_throw(collider & c, const worldstew & world, const double & delta, const double & friction, bool & hitwall, bool dostairs = false)
 {
             
     rigidbody & b = c.body;
@@ -3167,8 +3260,10 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
         auto motion = coord({b.xspeed, b.yspeed, b.zspeed});
         auto speed = magnitude(motion)*time;
         
-        if(iters%10 == 0)
-            printf("iters %d speed %f\n", iters, speed);
+        //if(iters%10 == 0)
+        //    printf("iters %d speed %f\n", iters, speed);
+        if(iters > 16)
+            break;
         
         if(motion == coord())
         {
@@ -3193,6 +3288,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
             bool didstairs = false;
             if(dostairs and -dot(coord(0,1,0),goodcollision.normal) <= 0.7 and speed > 0)
             {
+                hitwall = true;
                 double didtime = time * gooddistance/speed;
                 double steptime = time - didtime;
                 
@@ -3290,6 +3386,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                                     
                                     didstairs = true;
                                     reached = true;
+                                    hitwall = false;
                                 }
                             }
                         }
@@ -3526,11 +3623,19 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
     if(debughard) puts("throw over");
 }
 
-double height = 1.75*units_per_meter;
-double width = height/2;
-double offset = round(height*5/90);
+double height = 1.65*units_per_meter;
+double width = height/3;
+double offset = 0.30*units_per_meter;
 
 collider myself;
+
+int tests()
+{
+    coord point1(-1.024,  2.2315, -0.4215);
+    coord point2(-0.024, -2.2315,  0.4215);
+    coord point3( 1.024,  3.2315,  1.4215);
+    triangle mytri(point1, point2, point3);
+}
 
 int main (int argc, char ** argv)
 {
@@ -3553,6 +3658,8 @@ int main (int argc, char ** argv)
     // far away
     add_box(0, 1024+256-8, 2048, 2048);
     add_box(0, 1024+256-8-2048, 2048+2048, 2048);
+    add_box(2048, 1024+256-8, 0, 2048);
+    add_box(2048+2048, 1024+256-8-2048, 0, 2048);
     
     
     add_box(128, -256, 96+128, units_per_meter);
@@ -3604,12 +3711,13 @@ int main (int argc, char ** argv)
     
     //void insert_prism_oct_body(double x, double y, double z, double radius, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic)
     //insert_prism_oct_body(0, -offset, 0, 0.5*units_per_meter, 0, height, myself.body.collision);
-    insert_prism_ngon_body(0, -offset, 0, 0.5*units_per_meter, 16, 0, height, myself.body.collision);
+    insert_prism_ngon_body(0, -offset, 0, 0.5*units_per_meter, 64, 0, height, myself.body.collision);
     //insert_prism_oct_body(0, 0, 0, 32, 0, 32, myself.body.triangles, myself.body.points, false);
     myself.body.minima = make_minima(myself.body.collision.points);
     myself.body.maxima = make_maxima(myself.body.collision.points);
     
     double time_spent_rendering = 0;
+    static bool hitwall = false;
     while(!glfwWindowShouldClose(win))
     {
         glfwPollEvents();
@@ -3782,8 +3890,9 @@ int main (int argc, char ** argv)
         static triangle lastfloor = floor;
         bool jumped = false;
         // FIXME: give some kind of subframe behavior to jumping so that the bunnyhopping "interval" is fully framerate independent
-        double jumpspeed = -4.9*units_per_meter; // ~4.9 gives 1 second jump times with 9.8m/s gravity.
-        double walkspeed = 6.5*units_per_meter;//4*units_per_meter;
+        double jumpspeed = -4.6*units_per_meter; // ~4.9 gives 1 second jump times with 9.8m/s gravity.
+        //double walkspeed = 3.8*units_per_meter;//4*units_per_meter;
+        double walkspeed = 4.8*units_per_meter;//4*units_per_meter;
         
         if(glfwGetKey(win, GLFW_KEY_SPACE) and floor != zero_triangle)
         {
@@ -3834,11 +3943,11 @@ int main (int argc, char ** argv)
                     walking = walking*0.5;
                 }
                 // doing this instead of friction reduces "iceskating" (turns being wider than they should be while holding forward)
-                double drag = pow(0.01, delta);
+                double drag = pow(0.005, delta);
                 myself.body.xspeed *= drag;
                 myself.body.zspeed *= drag;
                 
-                double accel = 40*units_per_meter;
+                double accel = 60*units_per_meter;
                 auto startvector = coord(myself.body.xspeed, 0, myself.body.zspeed);
                 double startspeed = magnitude(startvector);
                 double current_relative_speed;
@@ -3854,21 +3963,26 @@ int main (int argc, char ** argv)
                     myself.body.xspeed += walking.x*addition;
                     myself.body.zspeed += walking.z*addition;
                     
-                    double endspeed = sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed);
-                    if(endspeed > mywalkspeed)
+                    // prevent increasing speed by walking into a wall at an angle - without preventing circlejumping
+                    //printf("velocity %f\n", startspeed);
+                    if(hitwall)
                     {
-                        double speedlimit = max(startspeed, mywalkspeed);
-                        double factor = speedlimit/endspeed;
-                        
-                        myself.body.xspeed *= factor;
-                        myself.body.zspeed *= factor;
-                        
+                        double endspeed = sqrt(myself.body.xspeed*myself.body.xspeed + myself.body.zspeed*myself.body.zspeed);
+                        if(endspeed > mywalkspeed)
+                        {
+                            double speedlimit = max(startspeed, mywalkspeed);
+                            double factor = speedlimit/endspeed;
+                            
+                            myself.body.xspeed *= factor;
+                            myself.body.zspeed *= factor;
+                            
+                        }
                     }
                 }
             }
             else
             {
-                double accel = 40*units_per_meter;
+                double accel = 60*units_per_meter;
                 auto startvector = coord(myself.body.xspeed, 0, myself.body.zspeed);
                 double current_relative_speed;
                 if(startvector != coord())
@@ -3891,7 +4005,10 @@ int main (int argc, char ** argv)
         if(!onfloor)
             myself.body.yspeed += gravity*delta/2;
         
-        collider_throw(myself, world, delta, 0, true);
+        hitwall = false;
+        collider_throw(myself, world, delta, 0, hitwall, true);
+        //if(hitwall)
+        //    puts("hit wall");
         
         double speed = magnitude(coord(myself.body.xspeed, 0, myself.body.zspeed))*delta;
         
@@ -3990,7 +4107,8 @@ int main (int argc, char ** argv)
             {
                 s->c.body.yspeed += gravity*delta/2;
                 
-                collider_throw(s->c, world, delta, 10*units_per_meter);
+                static bool hitwall_unused = false;
+                collider_throw(s->c, world, delta, 10*units_per_meter, hitwall_unused);
                 
                 s->c.body.yspeed += gravity*delta/2;
             }
