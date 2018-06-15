@@ -638,6 +638,14 @@ struct renderer {
             return tex;
         }
     }
+    
+    texture * texture_debug_white = nullptr;
+    
+    void load_debug_texture(const char * filename)
+    {
+        texture_debug_white = load_texture(filename);
+    }
+    
     struct cubemap {
         int w, h, n;
         GLuint texid;
@@ -825,7 +833,8 @@ struct renderer {
     BoxVAO, BoxVIO, BoxVBO,
     TerrainVAO, TerrainVIO, TerrainVBO,
     ScreenVAO, ScreenVIO, ScreenVBO,
-    CubeVAO, CubeVBO, CubeVIO,
+    CubeVAO, CubeVIO, CubeVBO,
+    StewVAO, StewVIO, StewVBO,
     FRBO, RBOC, RBOD,
     FBO_hires, FBOtexture0, FBOtexture1,
     FBO, FBOtexture2, FBOtexture3, FBOtexture4,
@@ -982,6 +991,21 @@ struct renderer {
         
         checkerr(__LINE__);
         
+        glGenVertexArrays(1, &StewVAO);
+        glGenBuffers(1, &StewVBO);
+        glGenBuffers(1, &StewVIO);
+        glBindVertexArray(StewVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, StewVBO);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, u));
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, nx));
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glEnableVertexAttribArray(2);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, StewVIO);
+        
+        checkerr(__LINE__);
+        
         glGenVertexArrays(1, &TerrainVAO);
         glGenBuffers(1, &TerrainVBO);
         glGenBuffers(1, &TerrainVIO);
@@ -1040,6 +1064,7 @@ struct renderer {
         "#version 330 core\n\
         uniform sampler2D mytexture;\n\
         uniform int boost;\n\
+        uniform int nolight;\n\
         uniform float gamma;\n\
         in vec2 myTexCoord;\n\
         in vec3 myNormal;\n\
@@ -1050,15 +1075,22 @@ struct renderer {
             vec4 color = texture2D(mytexture, myTexCoord, 0);\n\
             float dot = -dot(normalize(myNormal), normalize(vec3(1.0,1.0,-1.0)));\n\
             dot = max(0, dot);\n\
-            color.rgb = pow(color.rgb, vec3(gamma));\n\
-            vec3 diffuse = color.rgb * dot;\n\
-            vec3 ambient = color.rgb * 0.1;\n\
-            fragColor = vec4(pow(diffuse+ambient, vec3(1/gamma)), 1);\n\
-            if(boost == 1) fragColor.rgb *= 4;\n\
+            if(nolight == 0)\n\
+            {\n\
+                color.rgb = pow(color.rgb, vec3(gamma));\n\
+                vec3 diffuse = color.rgb * dot;\n\
+                vec3 ambient = color.rgb * 0.1;\n\
+                fragColor = vec4(pow(diffuse+ambient, vec3(1/gamma)), 1);\n\
+            }\n\
+            else\n\
+                fragColor = vec4(color.rgb, 1);\n\
+            if(boost != 0) fragColor.rgb *= 4;\n\
         }\n");
         
         glUseProgram(program);
         glUniform1i(glGetUniformLocation(program, "mytexture"), 0);
+        glUniform1i(glGetUniformLocation(program, "boost"), 0);
+        glUniform1i(glGetUniformLocation(program, "nolight"), 0);
         glUniform1f(glGetUniformLocation(program, "gamma"), 2.2);
         
         glBindVertexArray(CubeVAO);
@@ -1760,10 +1792,13 @@ struct renderer {
             draw_cubemap(c);
         for(const auto & t : terrains)
             draw_terrain(t);
+        for(const auto & t : stews)
+            draw_stew(t);
         
         boxes = {};
         cubemaps = {};
         terrains = {};
+        stews = {};
         
         if(!postprocessing)
         {
@@ -2070,9 +2105,17 @@ struct renderer {
         
         glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, 0, translation);
         glUniform1i(glGetUniformLocation(program, "boost"), texture->boost);
+        glUniform1i(glGetUniformLocation(program, "nolight"), 0);
         glBindTexture(GL_TEXTURE_2D, texture->texid);
         
         glDrawElements(GL_TRIANGLE_STRIP, sizeof(indexes)/sizeof(indexes[0]), GL_UNSIGNED_SHORT, 0);
+        
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        glUniform1i(glGetUniformLocation(program, "boost"), 0);
+        glUniform1i(glGetUniformLocation(program, "nolight"), 1);
+        glBindTexture(GL_TEXTURE_2D, texture_debug_white->texid);
+        glDrawElements(GL_TRIANGLE_STRIP, sizeof(indexes)/sizeof(indexes[0]), GL_UNSIGNED_SHORT, 0);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         
         //glBufferData(GL_ARRAY_BUFFER, sizeof(vertices2), vertices2,  GL_DYNAMIC_DRAW);
         //glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexes2), indexes2, GL_DYNAMIC_DRAW);
@@ -2123,6 +2166,68 @@ struct renderer {
         checkerr(__LINE__);
     }
     
+    // NOTE: for debugging; slow
+    struct scene_stew {
+        collisionstew * stew;
+        double x;
+        double y;
+        double z;
+    };
+    std::vector<scene_stew> stews;
+    void display_stew(collisionstew * stew, double x, double y, double z)
+    {
+        stews.push_back(scene_stew({stew, x, y, z}));
+    }
+    void draw_stew(const scene_stew & sstew)
+    {
+        const auto & stew = sstew.stew;
+        const auto & x = sstew.x;
+        const auto & y = sstew.y;
+        const auto & z = sstew.z;
+        
+        glUseProgram(program);
+        glBindVertexArray(StewVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, StewVBO);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, StewVIO);
+        
+        std::vector<vertex> triangles;
+        std::vector<unsigned short> indexes;
+        int i = 0;
+        for(const auto & holder : stew->triangles)
+        {
+            auto p1 = holder->tri.points[0];
+            auto p2 = holder->tri.points[1];
+            auto p3 = holder->tri.points[2];
+            auto n  = holder->tri.normal;
+            triangles.push_back(vertex({p1.x, p1.y, p1.z, 0, 0, n.x, n.y, n.z}));
+            triangles.push_back(vertex({p2.x, p2.y, p2.z, 0, 0, n.x, n.y, n.z}));
+            triangles.push_back(vertex({p3.x, p3.y, p3.z, 0, 0, n.x, n.y, n.z}));
+            indexes.push_back(i++);
+            indexes.push_back(i++);
+            indexes.push_back(i++);
+        }
+        glBufferData(GL_ARRAY_BUFFER, triangles.size()*sizeof(triangles[0]), triangles.data(),  GL_DYNAMIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexes.size()*sizeof(indexes[0]), indexes.data(), GL_DYNAMIC_DRAW);
+        
+        float translation[16] = {
+            1.0f, 0.0f, 0.0f,    x,
+            0.0f, 1.0f, 0.0f,    y,
+            0.0f, 0.0f, 1.0f,    z,
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+        glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, 0, translation);
+        
+        glUniform1i(glGetUniformLocation(program, "boost"), 0);
+        glUniform1i(glGetUniformLocation(program, "nolight"), 1);
+        glBindTexture(GL_TEXTURE_2D, texture_debug_white->texid);
+        
+        glDisable(GL_CULL_FACE);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        glDrawElements(GL_TRIANGLES, triangles.size(), GL_UNSIGNED_SHORT, 0);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        glEnable(GL_CULL_FACE);
+    }
+    
     struct scene_terrain {
         texture * texture;
         vertex * terrain;
@@ -2170,9 +2275,18 @@ struct renderer {
         
         glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, 0, translation);
         glUniform1i(glGetUniformLocation(program, "boost"), texture->boost);
+        glUniform1i(glGetUniformLocation(program, "nolight"), 0);
         glBindTexture(GL_TEXTURE_2D, texture->texid);
         
         glDrawElements(GL_TRIANGLE_FAN, terrainindexessize/sizeof(terrainindexes[0]), GL_UNSIGNED_SHORT, 0);
+        
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        glUniform1i(glGetUniformLocation(program, "boost"), 0);
+        glUniform1i(glGetUniformLocation(program, "nolight"), 1);
+        glBindTexture(GL_TEXTURE_2D, texture_debug_white->texid);
+        glDrawElements(GL_TRIANGLE_FAN, terrainindexessize/sizeof(terrainindexes[0]), GL_UNSIGNED_SHORT, 0);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        
         //glDrawElements(GL_TRIANGLE_STRIP, terrainindexessize/sizeof(terrainindexes[0]), GL_UNSIGNED_SHORT, 0);
         
         checkerr(__LINE__);
@@ -3014,9 +3128,16 @@ void insert_prism_oct_body(double x, double y, double z, double radius, double t
 }
 
 template <typename T>
-void insert_prism_ngon_body(double x, double y, double z, double radius, const int sides, double top, double bottom, T & collisionstew)
+// NOTE: adjustment is only good for ngons with side counts that are multiples of four
+void insert_prism_ngon_body(double x, double y, double z, double radius, const int sides, double top, double bottom, T & collisionstew, bool adjust = true)
 {
     if(sides < 3) return;
+    
+    if(adjust)
+    {
+        double inradius_factor = cos(M_PI/sides);
+        radius /= inradius_factor;
+    }
     
     int caplines = sides*2;
     
@@ -3067,8 +3188,9 @@ void insert_prism_ngon_body(double x, double y, double z, double radius, const i
     
     for(int i = 0; i < caplines; i++)
         collisionstew.insert(mypoints[i]);
-        
+    
 }
+
 
 template <typename T>
 void insert_box_body(double x, double y, double z, double diameter, double top, double bottom, T & collisionstew, double yangle = 0)
@@ -3653,6 +3775,8 @@ int main (int argc, char ** argv)
     auto junk = myrenderer.load_texture("junk.png");
     if(!junk) return 0;
     
+    myrenderer.load_debug_texture("white.png");
+    
     generate_terrain();
     
     // far away
@@ -3711,13 +3835,14 @@ int main (int argc, char ** argv)
     
     //void insert_prism_oct_body(double x, double y, double z, double radius, double top, double bottom, std::vector<collision> & collisions, std::vector<coord> & points, bool makestatic)
     //insert_prism_oct_body(0, -offset, 0, 0.5*units_per_meter, 0, height, myself.body.collision);
-    insert_prism_ngon_body(0, -offset, 0, 0.5*units_per_meter, 64, 0, height, myself.body.collision);
+    insert_prism_ngon_body(0, -offset, 0, 0.4*units_per_meter, 16, 0, height, myself.body.collision, true);
     //insert_prism_oct_body(0, 0, 0, 32, 0, 32, myself.body.triangles, myself.body.points, false);
     myself.body.minima = make_minima(myself.body.collision.points);
     myself.body.maxima = make_maxima(myself.body.collision.points);
     
     double time_spent_rendering = 0;
     static bool hitwall = false;
+    static bool drawme = false;
     while(!glfwWindowShouldClose(win))
     {
         glfwPollEvents();
@@ -3827,6 +3952,16 @@ int main (int argc, char ** argv)
         }
         else
             holding_z = false;
+        
+        static bool holding_b = false;
+        if(glfwGetKey(win, GLFW_KEY_B))
+        {
+            if(!holding_b)
+                drawme = !drawme;
+            holding_b = true;
+        }
+        else
+            holding_b = false;
         
         static double sensitivity = 1/16.0f;
         static bool continuation = false;
@@ -3982,7 +4117,10 @@ int main (int argc, char ** argv)
             }
             else
             {
-                double accel = 60*units_per_meter;
+                //double accel = 60*units_per_meter;
+                double accel = 20*units_per_meter;
+                if(!hitwall)
+                    accel *= 3;
                 auto startvector = coord(myself.body.xspeed, 0, myself.body.zspeed);
                 double current_relative_speed;
                 if(startvector != coord())
@@ -4124,6 +4262,8 @@ int main (int argc, char ** argv)
             myrenderer.display_box(wood, b->x, b->y, b->z, b->size, b->yangle);
         
         myrenderer.display_terrain(dirt, terrain, sizeof(terrain), terrainindexes, sizeof(terrainindexes), 0, 0, 0, 1);
+        
+        if(drawme) myrenderer.display_stew(&myself.body.collision, x, y, z);
         
         myrenderer.display_cubemap(sky);
         
