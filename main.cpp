@@ -3158,11 +3158,11 @@ void insert_prism_ngon_body(double x, double y, double z, double radius, const i
     // sides strip
     for(int i = 0; i < caplines; i++)
         collisionstew.insert(triholder(mypoints[i], mypoints[(i+1)%caplines], mypoints[(i+2)%caplines], !(i&1)));
-    // top(?) fan
+    // top fan
     coord start = mypoints[0];
     for(int i = 1; i < sides-1; i++)
         collisionstew.insert(triholder(start, mypoints[(i*2)%caplines], mypoints[((i+1)*2)%caplines], true));
-    // bottom(?) fan
+    // bottom fan
     start = mypoints[1];
     for(int i = 1; i < sides-1; i++)
         collisionstew.insert(triholder(start, mypoints[((i*2)+1)%caplines], mypoints[((i+1)*2+1)%caplines], false));
@@ -3408,7 +3408,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
             
             // check for stairstepping
             bool didstairs = false;
-            if(dostairs and -dot(coord(0,1,0),goodcollision.normal) <= 0.7 and speed > 0)
+            if(dostairs and -dot(coord(0,1,0),goodcollision.normal) <= 0.7 and -dot(coord(0,1,0),goodcollision.normal) >= -0.0 and speed > 0)
             {
                 hitwall = true;
                 double didtime = time * gooddistance/speed;
