@@ -3636,6 +3636,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                         if(debughard) puts("B");
                         //touching = {previous_b, current};
                         motion = coord();
+                        time = 0;
                         //break;
                     }
                     // skip into surface B
@@ -3661,6 +3662,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                     }
                     else
                     {
+                        // if we got here something is deeply broken with the movement solver the collision system
                         puts("-----------------------MAYDAY STATE");
                         exit(0);
                     }
@@ -3680,7 +3682,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                     baditers++;
                     if(baditers > 3)
                     {
-                        puts("----breaking early");
+                        // most likely in a three-corner pit that didn't get detected
                         time = 0;
                     }
                 }
@@ -3756,11 +3758,29 @@ int tests()
     coord point1(-1.024,  2.2315, -0.4215);
     coord point2(-0.024, -2.2315,  0.4215);
     coord point3( 1.024,  3.2315,  1.4215);
-    triangle mytri(point1, point2, point3);
+    
+    coord down( 0,  0.72,  0);
+    
+    coord ray_start_1 = point1-down;
+    coord ray_start_2 = point2-down;
+    coord ray_start_3 = point3-down;
+    coord ray_start_4 = (point1+point2+point3)/3-down;
+    
+    
+    double distance = ray_cast_triangle(ray_start_1, down*2, triangle(point1, point2, point3));
+    printf("test1 output: %f\n", distance);
+    distance = ray_cast_triangle(ray_start_2, down*2, triangle(point1, point2, point3));
+    printf("test2 output: %f\n", distance);
+    distance = ray_cast_triangle(ray_start_2, down*2, triangle(point1, point2, point3));
+    printf("test2 output: %f\n", distance);
+    distance = ray_cast_triangle(ray_start_3, down*2, triangle(point1, point2, point3));
+    printf("test3 output: %f\n", distance);
 }
 
 int main (int argc, char ** argv)
 {
+    tests();
+    
     renderer myrenderer;
     
     auto & win = myrenderer.win;
