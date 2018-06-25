@@ -16,6 +16,7 @@ limitations under the License.
 
 bool debughard = false;
 //bool debughard = true;
+bool debughard2 = false;
 
 double time_spent_triangle = 0;
 double time_spent_line = 0;
@@ -24,6 +25,7 @@ double time_spent_searching = 0;
 double time_spent_throwing = 0;
 
 #include <GL/gl3w.h>
+#define GLFW_INCLUDE_GLEXT
 #include <GLFW/glfw3.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -507,7 +509,7 @@ struct rigidbody {
     collisionstew collision;
 };
 
-triangle zero_triangle = triangle();
+const triangle zero_triangle = triangle();
 
 void checkerr(int line)
 {
@@ -570,15 +572,15 @@ double fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
 // fisheye projection post shader
 bool polar = true;
 
-int msaa = postprocessing?1:8;
-double viewPortRes = postprocessing?3.0f:1.0f;
+int msaa = postprocessing?8:8;
+double viewPortRes = postprocessing?2.0f:1.0f;
 
 bool dosharpen = true;
 double sharpenamount = 0.35;
 
 // long term TODO: make the bloom blur buffers low res so that high blur radiuses are cheap instead of expensive
 int bloomradius = 8;
-int bloompasses = 2;
+int bloompasses = 0;
 
 int shadow_resolutioni = 1024;
 
@@ -610,6 +612,13 @@ struct renderer {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            if (glfwExtensionSupported("GL_EXT_texture_filter_anisotropic"))
+            {
+                GLfloat fLargest;
+                glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &fLargest);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, fLargest);
+            }
+            
             checkerr(__LINE__);
             
             boost = 0;
@@ -1584,8 +1593,6 @@ struct renderer {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, FBOtexture4, 0);
-            checkerr(__LINE__);
-            
             checkerr(__LINE__);
         }
     }
@@ -2600,20 +2607,19 @@ inline void lines_cast_lines(const std::vector<lineholder *> & holder, const coo
             
             const coord ro = r->lin.points[1]-r->lin.points[0];
             
-            // line only belongs to back faces
-            
             const coord c1 = c->lin.points[0];
             const coord c2 = c->lin.points[1];
             const coord c3 = c2+ro;
             const coord c4 = c1+ro;
             
             const triangle tri1a = triangle(c1, c2, c3);
-            const triangle tri2a = triangle(c1, c4, c3, tri1a.normal);
+            const triangle tri2a = triangle(c1, c4, c3);
             
-            const bool forwards = (dot(motion, tri1a.normal) <= 0);
+            const bool forwards1 = (dot(motion, tri1a.normal) <= 0);
+            const bool forwards2 = (dot(motion, tri2a.normal) <= 0);
             
-            const triangle tri1 = forwards?tri1a:triangle(c1, c3, c2, -tri1a.normal);
-            const triangle tri2 = forwards?tri2a:triangle(c1, c3, c4, -tri1a.normal);
+            const triangle tri1 = forwards1?tri1a:triangle(c1, c3, c2, -tri1a.normal);
+            const triangle tri2 = forwards2?tri2a:triangle(c1, c3, c4, -tri2a.normal);
             
             const double d2 = ray_cast_triangle(r2, motion, tri1);
             const double d3 = ray_cast_triangle(r2, motion, tri2);
@@ -3259,11 +3265,10 @@ constexpr double safety = 0.01;
 
 // checks whether the given body, if placed at the given position, would collide with the given worldstew
 // true if in contact
-bool body_check_world(const rigidbody & body, const coord & position, const worldstew & world)
+bool body_check_world(const rigidbody & body, const worldstew & world, const coord & position)
 {
-    const coord unit = coord(1,1,1);
-    auto minima = body.minima+position-unit;
-    auto maxima = body.maxima+position+unit;
+    auto minima = body.minima+position;
+    auto maxima = body.maxima+position;
     
     double start, end;
     start = glfwGetTime();
@@ -3281,8 +3286,9 @@ bool body_check_world(const rigidbody & body, const coord & position, const worl
         {
             const triangle & newtri = th->tri;
             double d2 = ray_cast_triangle(newline.points[0], newline.points[1]-newline.points[0], newtri);
-            if(d2 > length) d2 = ray_cast_triangle(newline.points[1], newline.points[0]-newline.points[1], newtri);
-            if(d2 <= length) return true;
+            if(d2 >= 0 and d2 < length) return true;
+            d2 = ray_cast_triangle(newline.points[1], newline.points[0]-newline.points[1], newtri);
+            if(d2 >= 0 and d2 < length) return true;
         }
     }
     
@@ -3299,8 +3305,9 @@ bool body_check_world(const rigidbody & body, const coord & position, const worl
         {
             const triangle newtri = th->tri+position;
             double d2 = ray_cast_triangle(newline.points[0], newline.points[1]-newline.points[0], newtri);
-            if(d2 > length) d2 = ray_cast_triangle(newline.points[1], newline.points[0]-newline.points[1], newtri);
-            if(d2 <= length) return true;
+            if(d2 >= 0 and d2 < length) return true;
+            d2 = ray_cast_triangle(newline.points[1], newline.points[0]-newline.points[1], newtri);
+            if(d2 >= 0 and d2 < length) return true;
         }
     }
     return false;
@@ -3310,6 +3317,11 @@ void body_find_contact(const rigidbody & b, const worldstew & world, const coord
 {
     goodcollision = triangle();
     gooddistance = INF;
+    if(body_check_world(b, world, position))
+    {
+        gooddistance = 0.0;
+        return;
+    }
     
     const coord unit = coord(1,1,1);
     auto minima = make_minima(b.minima, b.minima+motion)+position-unit;
@@ -3345,6 +3357,16 @@ void body_find_contact(const rigidbody & b, const worldstew & world, const coord
     else
         gooddistance = INF;
     
+    double tempDistance = max(0, gooddistance);
+    auto otherpos = (tempDistance != INF) ? (position+normalize(motion)*tempDistance) : (position+motion);
+    if(body_check_world(b, world, otherpos))
+    {
+        puts("Screwed up collision A");
+        printf("%f %f %f\n", otherpos.x, otherpos.y, otherpos.z);
+        gooddistance = 0;
+        goodcollision = zero_triangle;
+    }
+    
     end = glfwGetTime();
     time_spent_searching += end-start;
 }
@@ -3374,6 +3396,11 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
     int baditers = 0;
     bool refusedtohit = false;
     int iters = 0;
+    if(body_check_world(b, world, coord(b.x, b.y, b.z)))
+    {
+        puts("skipping throw, already in world");
+        return;
+    }
     while(time > 0)
     {
         iters++;
@@ -3385,19 +3412,25 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
         //if(iters%10 == 0)
         //    printf("iters %d speed %f\n", iters, speed);
         if(iters > 16)
+        {
+            puts("out of iterations, breaking");
+            time = 0;
             break;
+        }
         
         if(motion == coord())
         {
             if(false)if(debughard) puts("still, breaking");
             time = 0;
-            continue;
+            break;
         }
         
         triangle goodcollision = zero_triangle;
         double gooddistance = INF;
         
-        body_find_contact(b, world, motion*time, speed, goodcollision, gooddistance);
+        auto travelmotion = motion*time;
+        
+        body_find_contact(b, world, travelmotion, speed, goodcollision, gooddistance);
         gooddistance = max(0, gooddistance); // prevents us from ejecting into other walls
         
         double throw_start = glfwGetTime();
@@ -3486,9 +3519,9 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                                 {
                                     testposition = testposition + coord(0, testdistance2, 0);
                                     
-                                    if(false) puts("did stairs");
-                                    if(false) printf("%f\n", testdistance);
-                                    if(false) printf("%f\n", testdistance2);
+                                    //if(true) puts("did stairs");
+                                    //if(true) printf("%f\n", testdistance);
+                                    //if(true) printf("%f\n", testdistance2);
                                     
                                     b.x = testposition.x;
                                     b.y = testposition.y;
@@ -3538,7 +3571,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                         rigidbody_cast_virtual_triangle(b.collision, coord(b.x, b.y, b.z), -touching[j].normal, touching[j], dist, contact_collision, -safety*3, safety*3);
                         if(dist == INF)
                         {
-                            if(debughard) puts("erasing inside");
+                            if(debughard or debughard2) puts("erasing inside");
                             if(debughard) printf("%f\n", dist);
                             if(debughard) printf("%f\n", airtime);
                             if(debughard) printf("%f\n", time);
@@ -3556,6 +3589,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 touching.push_back(p);
                 
                 // FIXME: handle seams
+                // in-loop friction
                 if(last_collision != zero_triangle and friction > 0)
                 {
                     auto contact_direction = last_collision.normal;
@@ -3578,9 +3612,45 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                     }
                 }
                 
+                /*
                 b.x += airtime*b.xspeed;
                 b.y += airtime*b.yspeed;
                 b.z += airtime*b.zspeed;
+                */
+                auto normalized_motion = normalize(travelmotion);
+                b.x += gooddistance*normalized_motion.x;
+                b.y += gooddistance*normalized_motion.y;
+                b.z += gooddistance*normalized_motion.z;
+                
+                if(body_check_world(b, world, coord(b.x, b.y, b.z)))
+                {
+                    puts("Screwed up collision B");
+                    printf("%f\n", gooddistance);
+                    printf("%f %f %f\n", b.x, b.y, b.z);
+                    printf("%f %f %f\n", p.normal.x, p.normal.y, p.normal.z);
+                    return;
+                }
+                
+                // eject from the surface we just collided with
+                triangle testcollision = zero_triangle;
+                double testdistance = INF;
+                body_find_contact(b, world, p.normal*safety, speed, testcollision, testdistance);
+                testdistance = max(0, testdistance);
+                if(testdistance == INF)
+                    testdistance = safety;
+                b.x += p.normal.x*testdistance;
+                b.y += p.normal.y*testdistance;
+                b.z += p.normal.z*testdistance;
+                
+                if(body_check_world(b, world, coord(b.x, b.y, b.z)))
+                {
+                    puts("Screwed up collision C");
+                    printf("%f\n", testdistance);
+                    printf("%f %f %f\n", b.x, b.y, b.z);
+                    printf("%f %f %f\n", p.normal.x, p.normal.y, p.normal.z);
+                    return;
+                }
+                
                 
                 double fudge_space = 0;//.02;
                 
@@ -3603,13 +3673,13 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                     auto mydot = dot(current.normal, previous.normal);
                     if(mydot <= fudge_space)
                     {
-                        if(debughard) puts("seam");
+                        if(debughard or debughard2) puts("seam");
                         auto seam = cross(current.normal, previous.normal);
                         motion = project(motion, seam);
                     }
                     else
                     {
-                        if(debughard) puts("skip");
+                        if(debughard or debughard2) puts("skip");
                         touching = {current};
                         motion = reject(motion, current.normal);
                     }
@@ -3626,23 +3696,23 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                     // skip off both old surfaces
                     if(dot_a > fudge_space and dot_b > fudge_space)
                     {
-                        if(debughard) puts("A");
+                        if(debughard or debughard2) puts("A");
                         touching = {current};
                         motion = reject(motion, current.normal);
                     }
                     // skip into both old surfaces
                     else if(dot_a <= fudge_space and dot_b <= fudge_space)
                     {
-                        if(debughard) puts("B");
+                        if(debughard or debughard2) puts("B");
                         //touching = {previous_b, current};
                         motion = coord();
                         time = 0;
-                        //break;
+                        break;
                     }
                     // skip into surface B
                     else if(dot_a > fudge_space)
                     {
-                        if(debughard) puts("C");
+                        if(debughard or debughard2) puts("C");
                         if(debughard) printf("%f %f %f\n", previous_a.normal.x, previous_a.normal.y, previous_a.normal.z);
                         if(debughard) printf("%f %f %f\n", previous_b.normal.x, previous_b.normal.y, previous_b.normal.z);
                         if(debughard) printf("%f %f %f\n", current.normal.x, current.normal.y, current.normal.z);
@@ -3655,7 +3725,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                     // skip into surface A
                     else if(dot_b > fudge_space)
                     {
-                        if(debughard) puts("D");
+                        if(debughard or debughard2) puts("D");
                         touching = {previous_a, current};
                         auto seam = cross(current.normal, previous_a.normal);
                         motion = project(motion, seam);
@@ -3676,14 +3746,16 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 reached = true;
                 hit_anything_at_all = true;
                 
+                // this is allowed a few times or some kinds of normal rectifications cause snagging
                 if(newtime >= time)
                 {
-                    //puts("backtracking");
                     baditers++;
                     if(baditers > 3)
                     {
+                        puts("backtracking");
                         // most likely in a three-corner pit that didn't get detected
                         time = 0;
+                        break;
                     }
                 }
                 else
@@ -3694,11 +3766,50 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 }
             }
         }
+        else
+        {
+            // FIXME: handle seams
+            // in-loop friction
+            if(last_collision != zero_triangle and friction > 0)
+            {
+                auto contact_direction = last_collision.normal;
+                
+                {
+                    double speed = magnitude(motion);
+                    if(speed != 0)
+                    {
+                        double normalforce = -dot(contact_direction, coord(0, 1, 0));
+                        if(normalforce < 0) normalforce = 0;
+                        double half_newspeed = speed-friction*abs(time)*normalforce;
+                        if(half_newspeed < 0) half_newspeed = 0;
+                        
+                        motion = motion*(half_newspeed/speed);
+                        
+                        b.xspeed = motion.x;
+                        b.yspeed = motion.y;
+                        b.zspeed = motion.z;
+                    }
+                }
+            }
+            
+            b.x += travelmotion.x;
+            b.y += travelmotion.y;
+            b.z += travelmotion.z;
+            
+            if(body_check_world(b, world, coord(b.x, b.y, b.z)))
+            {
+                puts("Screwed up collision D");
+                printf("%f %f %f\n", b.x, b.y, b.z);
+                return;
+            }
+            time = 0;
+        }
         if(!hit_anything_at_all)
         {
             if(debughard) puts("!hit anything at all");
             last_collision = zero_triangle;
         }
+        // do friction
         if(!reached)
         {
             if(time > 0)
@@ -3736,14 +3847,6 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
         
         time_spent_throwing += throw_end-throw_start;
     }
-    
-    if(time > 0 and !refusedtohit)
-    {
-        if(debughard) puts("running auto motion");
-        b.z += time*b.zspeed;
-        b.x += time*b.xspeed;
-        b.y += time*b.yspeed;
-    }
     if(debughard) puts("throw over");
 }
 
@@ -3771,10 +3874,25 @@ int tests()
     printf("test1 output: %f\n", distance);
     distance = ray_cast_triangle(ray_start_2, down*2, triangle(point1, point2, point3));
     printf("test2 output: %f\n", distance);
-    distance = ray_cast_triangle(ray_start_2, down*2, triangle(point1, point2, point3));
-    printf("test2 output: %f\n", distance);
     distance = ray_cast_triangle(ray_start_3, down*2, triangle(point1, point2, point3));
     printf("test3 output: %f\n", distance);
+    
+    distance = ray_cast_triangle(ray_start_1, down, triangle(point1, point2, point3));
+    printf("test4 output: %f\n", distance);
+    distance = ray_cast_triangle(ray_start_2, down, triangle(point1, point2, point3));
+    printf("test5 output: %f\n", distance);
+    distance = ray_cast_triangle(ray_start_3, down, triangle(point1, point2, point3));
+    printf("test6 output: %f\n", distance);
+    
+    distance = ray_cast_triangle(point1, down, triangle(point1, point2, point3));
+    printf("test7 output: %f\n", distance);
+    distance = ray_cast_triangle(point2, down, triangle(point1, point2, point3));
+    printf("test8 output: %f\n", distance);
+    distance = ray_cast_triangle(point3, down, triangle(point1, point2, point3));
+    printf("test9 output: %f\n", distance);
+    
+    distance = ray_cast_triangle(coord( 10.024,  3.2315,  1.4215), down, triangle(point1, point2, point3));
+    printf("test10 output: %f\n", distance);
 }
 
 int main (int argc, char ** argv)
@@ -4165,6 +4283,7 @@ int main (int argc, char ** argv)
         
         hitwall = false;
         collider_throw(myself, world, delta, 0, hitwall, true);
+        //collider_throw(myself, world, delta, 0, hitwall, false);
         //if(hitwall)
         //    puts("hit wall");
         
@@ -4172,13 +4291,13 @@ int main (int argc, char ** argv)
         
         triangle newfloor = zero_triangle;
         double newdistance = INF;
-        body_find_contact(myself.body, world, coord(0,speed+step_size,0), speed+step_size, newfloor, newdistance);
+        body_find_contact(myself.body, world, coord(0,speed+step_size+safety,0), speed+step_size, newfloor, newdistance);
         newdistance = max(newdistance, 0);
         
-        if(floor != zero_triangle and -dot(coord(0,1,0), floor.normal) > 0.7 and (newdistance > safety) and !jumped)
+        if(floor != zero_triangle and -dot(coord(0,1,0), floor.normal) > 0.7 and newdistance > 0 and newdistance != INF and !jumped)
         {
             // stick to floor
-            if(newdistance != INF and -dot(coord(0,1,0), newfloor.normal) > 0.7) // ~45.57 degrees not exactly 45
+            if(-dot(coord(0,1,0), newfloor.normal) > 0.7) // ~45.57 degrees not exactly 45
             {
                 //printf("clamping to floor %f\n", newdistance);
                 
@@ -4195,9 +4314,9 @@ int main (int argc, char ** argv)
             // run off ledge
             else
             {
-                printf("wasdrghd %f\n", myself.body.yspeed);
+                //printf("wasdrghd %f\n", myself.body.yspeed);
                 myself.body.yspeed = max(0, myself.body.yspeed);
-                printf("wasdrghd2 %f\n", myself.body.yspeed);
+                //printf("wasdrghd2 %f\n", myself.body.yspeed);
             }
         }
         
