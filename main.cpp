@@ -2348,15 +2348,13 @@ struct renderer {
         std::vector<vertex> triangles;
         std::vector<unsigned short> indexes;
         int i = 0;
-        for(const auto & holder : stew->triangles)
+        for(const auto & holder : stew->lines)
         {
-            auto p1 = holder->tri.points[0];
-            auto p2 = holder->tri.points[1];
-            auto p3 = holder->tri.points[2];
-            auto n  = holder->tri.normal;
-            triangles.push_back(vertex({p1.x, p1.y, p1.z, 0, 0, n.x, n.y, n.z}));
-            triangles.push_back(vertex({p2.x, p2.y, p2.z, 0, 0, n.x, n.y, n.z}));
-            triangles.push_back(vertex({p3.x, p3.y, p3.z, 0, 0, n.x, n.y, n.z}));
+            auto p1 = holder->lin.points[0];
+            auto p2 = holder->lin.points[1];
+            triangles.push_back(vertex({p1.x, p1.y, p1.z, 0, 0, 0, 1, 0}));
+            triangles.push_back(vertex({p2.x, p2.y, p2.z, 0, 0, 0, 1, 0}));
+            triangles.push_back(vertex({p2.x, p2.y, p2.z, 0, 0, 0, 1, 0}));
             indexes.push_back(i++);
             indexes.push_back(i++);
             indexes.push_back(i++);
@@ -3804,12 +3802,53 @@ void insert_prism_oct_body(double x, double y, double z, double radius, double t
 }
 
 template <typename T>
+void insert_cylinder_debug_mesh(double x, double y, double z, double radius, const int sides, double top, double bottom, T & collisionstew)
+{
+    std::vector<coord> cappoints(64*2);
+    int n = 0;
+    for(int i = 0; i < 64; i++)
+    {
+        double r = i*(360.0f/64)/180*M_PI;
+        double forwards = cos(r)*radius;
+        double rightwards = sin(r)*radius;
+        //printf("%f %f\n", forwards, rightwards);
+        cappoints[n++] = coord(rightwards+x, top+y, forwards+z);
+        cappoints[n++] = coord(rightwards+x, bottom+y, forwards+z);
+    }
+    
+    int len_cappoints = cappoints.size();
+    for(int i = 0; i < len_cappoints; i+=2)
+    {
+        collisionstew.insert(lineholder(cappoints[(i+0)%len_cappoints], cappoints[(i+2)%len_cappoints], coord(), coord()));
+        collisionstew.insert(lineholder(cappoints[(i+1)%len_cappoints], cappoints[(i+3)%len_cappoints], coord(), coord()));
+    }
+    
+    std::vector<coord> sidepoints(8*2);
+    n = 0;
+    for(int i = 0; i < 8; i++)
+    {
+        double r = i*(360.0f/8)/180*M_PI;
+        double forwards = cos(r)*radius;
+        double rightwards = sin(r)*radius;
+        //printf("%f %f\n", forwards, rightwards);
+        sidepoints[n++] = coord(rightwards+x, top+y, forwards+z);
+        sidepoints[n++] = coord(rightwards+x, bottom+y, forwards+z);
+    }
+    
+    int len_sidepoints = sidepoints.size();
+    for(int i = 0; i < len_sidepoints; i+=2)
+    {
+        collisionstew.insert(lineholder(sidepoints[(i+0)%len_sidepoints], sidepoints[(i+1)%len_sidepoints], coord(), coord()));
+    }
+}
+
+template <typename T>
 // NOTE: adjustment is only good for ngons with side counts that are multiples of four
 void insert_prism_ngon_body(double x, double y, double z, double radius, const int sides, double top, double bottom, T & collisionstew, bool adjust = true, bool sidesonly = false)
 {
     if(sides < 3) return;
     
-    if(adjust)
+    if(adjust and !sidesonly)
     {
         double inradius_factor = cos(M_PI/sides);
         radius /= inradius_factor;
@@ -3817,7 +3856,7 @@ void insert_prism_ngon_body(double x, double y, double z, double radius, const i
     
     int caplines = sides*2;
     
-    coord mypoints[sides*2];
+    std::vector<coord> mypoints(sides*2);
     int n = 0;
     for(int i = 0; i < sides; i++)
     {
@@ -3831,19 +3870,20 @@ void insert_prism_ngon_body(double x, double y, double z, double radius, const i
     
     // insert triangles
     
-    // sides strip
-    for(int i = 0; i < caplines; i++)
-        collisionstew.insert(triholder(mypoints[i], mypoints[(i+1)%caplines], mypoints[(i+2)%caplines], !(i&1)));
-    if(sidesonly)
-        return;
-    // top fan
-    coord start = mypoints[0];
-    for(int i = 1; i < sides-1; i++)
-        collisionstew.insert(triholder(start, mypoints[(i*2)%caplines], mypoints[((i+1)*2)%caplines], true));
-    // bottom fan
-    start = mypoints[1];
-    for(int i = 1; i < sides-1; i++)
-        collisionstew.insert(triholder(start, mypoints[((i*2)+1)%caplines], mypoints[((i+1)*2+1)%caplines], false));
+    if(!sidesonly)
+    {
+        // sides strip
+        for(int i = 0; i < caplines; i++)
+            collisionstew.insert(triholder(mypoints[i], mypoints[(i+1)%caplines], mypoints[(i+2)%caplines], !(i&1)));
+        // top fan
+        coord start = mypoints[0];
+        for(int i = 1; i < sides-1; i++)
+            collisionstew.insert(triholder(start, mypoints[(i*2)%caplines], mypoints[((i+1)*2)%caplines], true));
+        // bottom fan
+        start = mypoints[1];
+        for(int i = 1; i < sides-1; i++)
+            collisionstew.insert(triholder(start, mypoints[((i*2)+1)%caplines], mypoints[((i+1)*2+1)%caplines], false));
+    }
     
     // insert lines
     
@@ -4682,7 +4722,7 @@ int main (int argc, char ** argv)
     //insert_prism_ngon_body(0, -offset, 0, 0.4*units_per_meter, 32, 0, height, myself.body.collision, true);
     insert_cylinder_body(offset, height-offset, 0.4*units_per_meter, myself.body.collision);
     collisionstew fakebody;
-    insert_prism_ngon_body(0, -offset, 0, 0.4*units_per_meter, 32, 0, height, fakebody, false, true);
+    insert_cylinder_debug_mesh(0, -offset, 0, 0.4*units_per_meter, 8, 0, height, fakebody);
     
     //insert_prism_ngon_body(0, -offset, 0, 0.4*units_per_meter, 4, 0, height, myself.body.collision, true);
     //insert_prism_oct_body(0, 0, 0, 32, 0, 32, myself.body.triangles, myself.body.points, false);
