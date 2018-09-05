@@ -720,7 +720,8 @@ double fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
 // fisheye projection post shader
 bool polar = true;
 
-int msaa = postprocessing?8:8;
+//int msaa = postprocessing?8:8;
+int msaa = 0;
 double viewPortRes = postprocessing?2.0f:1.0f;
 
 bool dosharpen = true;
@@ -3104,7 +3105,7 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
                 contact_normal = contact(c->tri.normal);
             }
         }
-        // cylinder-mesh collision part C (triangle-point)
+        // cylinder-mesh collision part B (triangle-point)
         for(const auto & cyl : body.cylinders)
         {
             coord point;
@@ -3226,7 +3227,7 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
         contact_normal = new_contact;
     }
     
-    // cylinder-mesh collision part B (edges-edges (edge-side, edge-rim)), 
+    // cylinder-mesh collision part C (edges-edges (edge-side, edge-rim)), 
     for(const auto & c : lines)
     {
         const auto & lin = c->lin;
@@ -4366,10 +4367,11 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 // FIXME this should, in theory, be aware of seams and crevices
                 contact testcollision = no_contact;
                 double testdistance = INF;
-                body_find_contact(b, world, p.normal*safety, speed, testcollision, testdistance);
+                body_find_contact(b, world, p.normal*safety*2, safety*2, testcollision, testdistance);
                 testdistance = max(0, testdistance);
                 if(testdistance == INF)
                     testdistance = safety;
+                
                 b.x += p.normal.x*testdistance;
                 b.y += p.normal.y*testdistance;
                 b.z += p.normal.z*testdistance;
@@ -4683,9 +4685,10 @@ int main (int argc, char ** argv)
     add_box(0, -96-64-128, 256-32+128, 128);
     add_box(64, -96, 256, 256);
     
-    add_box(-512, 64, 256, 128);
+    //add_box(-512, 192+construct_stair_rise, 256, 512);
+    add_box(-512, 0, 256, 128);
     for(int i = 1; i < 10; i++)
-        add_box(-512-i, 64-construct_stair_rise*i, 256+construct_stair_run*i, 128);
+        add_box(-512-i, -construct_stair_rise*i, 256+construct_stair_run*i, 128);
     
     
     // second stack
@@ -4720,9 +4723,13 @@ int main (int argc, char ** argv)
     //insert_prism_oct_body(0, -offset, 0, 0.5*units_per_meter, 0, height, myself.body.collision);
     //insert_prism_ngon_body(0, -offset, 0, 0.4*units_per_meter, 32, 0, height, myself.body.collision, true);
     //insert_prism_ngon_body(0, -offset, 0, 0.4*units_per_meter, 32, 0, height, myself.body.collision, true);
+    
+    
     insert_cylinder_body(offset, height-offset, 0.4*units_per_meter, myself.body.collision);
     collisionstew fakebody;
     insert_cylinder_debug_mesh(0, -offset, 0, 0.4*units_per_meter, 8, 0, height, fakebody);
+    
+    //insert_prism_ngon_body(0, -offset, 0, 0.4*units_per_meter, 256, 0, height, myself.body.collision, true);
     
     //insert_prism_ngon_body(0, -offset, 0, 0.4*units_per_meter, 4, 0, height, myself.body.collision, true);
     //insert_prism_oct_body(0, 0, 0, 32, 0, 32, myself.body.triangles, myself.body.points, false);
@@ -5173,6 +5180,7 @@ int main (int argc, char ** argv)
         
         myrenderer.display_terrain(dirt, terrain, sizeof(terrain), terrainindexes, sizeof(terrainindexes), 0, 0, 0, 1);
         
+        //if(drawme) myrenderer.display_stew(&myself.body.collision, x, y, z);
         if(drawme) myrenderer.display_stew(&fakebody, x, y, z);
         
         myrenderer.display_cubemap(sky);
