@@ -202,12 +202,22 @@ double magnitude_sq(const T & a)
 
 coord normalize(const coord & a)
 {
-    return a/magnitude(a);
+    if(a == coord())
+        return coord(0, 0, 0);
+    double mag = magnitude(a);
+    if(mag > 0)
+        return a/magnitude(a);
+    else
+        return normalize(a*8192);
 }
 
 coord project(const coord & a, const coord & b)
 {
-    return b * (dot(a, b)/dot(b, b));
+    double bottomdot = dot(b, b);
+    if(bottomdot > 0)
+        return b * (dot(a, b)/bottomdot);
+    else
+        return project(a, b*8192);
 }
 
 constexpr double fudge_radians = 0.00005;
@@ -483,14 +493,14 @@ struct triholder {
 
 inline double ray_cast_triangle(const coord & o, const coord & m, const triangle & c)
 {
-    // no collision from behind (motion in same direction as normal)
-    
-    if(m == coord()) return 0;
-    
     double velocity = magnitude(m);
+    
+    if(velocity == 0)
+        return INF;
     
     coord d = m/velocity;
     
+    // no collision from behind (behind = motion in same direction as normal)
     if(dot(d, c.normal) >= 0)
         return INF;
     
@@ -720,8 +730,8 @@ double fov = 126.869898; // 90*atan(tan(45/180*pi)*2)/pi*4
 // fisheye projection post shader
 bool polar = true;
 
-//int msaa = postprocessing?8:8;
-int msaa = 0;
+int msaa = postprocessing?8:8;
+//int msaa = 0;
 double viewPortRes = postprocessing?2.0f:1.0f;
 
 bool dosharpen = true;
@@ -2908,6 +2918,9 @@ bool ray_circle_intersection(coord2d origin, double radius, coord2d ray_start, c
     
     double line_length = magnitude(ray_end);
     
+    if(line_length == 0)
+        return false;
+    
     origin = origin / line_length;
     ray_end = ray_end / line_length;
     radius /= line_length;
@@ -2985,6 +2998,9 @@ double line_circle_distance_fraction(coord2d origin, double radius, coord2d ray_
     ray_end = ray_end - ray_start;
     
     double line_length = magnitude(ray_end);
+    
+    if(line_length == 0)
+        return false;
     
     origin = origin / line_length;
     ray_end = ray_end / line_length;
@@ -3126,7 +3142,7 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
             d2 = ray_cast_triangle(b_point, motion, c->tri);
             if(d2 < d1 and d2 >= minimum and d2 <= maximum)
             {
-                type = 1;
+                type = 10;
                 d1 = d2;
                 contact_normal = contact(c->tri.normal);
             }
@@ -3137,7 +3153,7 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
             d2 = ray_cast_triangle(t_point, motion, c->tri);
             if(d2 < d1 and d2 >= minimum and d2 <= maximum)
             {
-                type = 1;
+                type = 11;
                 d1 = d2;
                 contact_normal = contact(c->tri.normal);
             }
@@ -3176,7 +3192,7 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
                         const double d2 = magnitude(side_endpoint-*p);
                         if(d2 < d1 and d2 >= minimum and d2 <= maximum)
                         {
-                            type = 2;
+                            type = 20;
                             d1 = d2;
                             coord normal = position - side_endpoint;
                             normal.y = 0;
@@ -3193,7 +3209,7 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
                 const double d2 = line_disk_distance(coord(position.x, bottom_cap_y, position.z), cyl->radius, *p, point_inverse_motion, 0);
                 if(d2 < d1 and d2 >= minimum and d2 <= maximum)
                 {
-                    type = 2;
+                    type = 21;
                     d1 = d2;
                     contact_normal = contact(coord(0, -1.0, 0));
                 }
@@ -3204,7 +3220,7 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
                 const double d2 = line_disk_distance(coord(position.x, top_cap_y, position.z), cyl->radius, *p, point_inverse_motion, 0);
                 if(d2 < d1 and d2 >= minimum and d2 <= maximum)
                 {
-                    type = 2;
+                    type = 22;
                     d1 = d2;
                     contact_normal = contact(coord(0, 1.0, 0));
                 }
@@ -3267,7 +3283,7 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
                         // handle result
                         if(d2 < d1 and d2 >= minimum and d2 <= maximum)
                         {
-                            type = 3;
+                            type = 30;
                             d1 = d2;
                             contact_normal = temp_contact;
                         }
@@ -3305,7 +3321,7 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
                     // handle result
                     if(d2 < d1 and d2 >= minimum and d2 <= maximum)
                     {
-                        type = 3;
+                        type = 31;
                         d1 = d2;
                         contact_normal = temp_contact;
                     }
@@ -3382,9 +3398,7 @@ void rigidbody_cast_world(const collisionstew & body, const coord & position, co
     if(verbose and debughard)
     {
         //if(type == 0) puts("TYPE Z");
-        if(type == 1) puts("TYPE A");
-        if(type == 2) puts("TYPE B");
-        if(type == 3) puts("TYPE C");
+        if(type != 0) printf("type %d\n", type);
     }
     #endif
 }
@@ -4041,6 +4055,8 @@ void body_find_contact(const rigidbody & b, const worldstew & world, const coord
         gooddistance = 0.0;
         return;
     }
+    if(motion.x == 0 and motion.y == 0 and motion.z == 0)
+        return;
     
     const coord unit = coord(1,1,1);
     auto minima = make_minima(b.minima, b.minima+motion)+position-unit;
@@ -4066,9 +4082,11 @@ void body_find_contact(const rigidbody & b, const worldstew & world, const coord
         if(dottie < -0)
         {
             puts("bad dot in finding contact");
-            printf("%.80f\n", dottie);
-            printf("%f %f %f\n", motion.x, motion.y, motion.z);
-            printf("%f %f %f\n", goodcollision.normal.x, goodcollision.normal.y, goodcollision.normal.z);
+            printf("%08llX\n", dottie);
+            printf("%.20f\n", dottie);
+            printf("%.20f %.20f %.20f\n", motion.x, motion.y, motion.z);
+            printf("%08llX %08llX %08llX\n", motion.x, motion.y, motion.z);
+            printf("%.20f %.20f %.20f\n", goodcollision.normal.x, goodcollision.normal.y, goodcollision.normal.z);
             exit(0);
         }
         gooddistance -= safety;
@@ -4189,7 +4207,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                     //testmotion = reject(testmotion, testcollision.normal);
                     
                     double testmotiondistance = magnitude(testmotion)*steptime; // in units of motion per frame, "distance", not "speed"
-                    if(testmotiondistance != 0) // skip if no motion
+                    if(testmotiondistance > 0) // skip if no motion
                     {
                         // raise ourselves by up to step_size
                         body_find_contact(b, world, testposition, coord(0, -(step_size+safety), 0), (step_size+safety), testcollision, testdistance);
@@ -4268,7 +4286,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 }
             }
             
-            if(!didstairs)
+            if(!didstairs and speed > 0)
             {
                 if(gooddistance < safety)
                     low_motion_iterations++;
@@ -4328,7 +4346,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                     
                     {
                         double speed = magnitude(motion);
-                        if(speed != 0)
+                        if(speed > 0)
                         {
                             double normalforce = -dot(contact_direction, coord(0, 1, 0));
                             if(normalforce < 0) normalforce = 0;
@@ -4511,7 +4529,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                 
                 {
                     double speed = magnitude(motion);
-                    if(speed != 0)
+                    if(speed > 0)
                     {
                         double normalforce = -dot(contact_direction, coord(0, 1, 0));
                         if(normalforce < 0) normalforce = 0;
@@ -4557,7 +4575,7 @@ void collider_throw(collider & c, const worldstew & world, const double & delta,
                     
                     {
                         double speed = magnitude(motion);
-                        if(speed != 0)
+                        if(speed > 0)
                         {
                             double normalforce = -dot(contact_direction, coord(0, 1, 0));
                             if(normalforce < 0) normalforce = 0;
@@ -4919,7 +4937,7 @@ int main (int argc, char ** argv)
         
         contact floor = no_contact;
         double distance = INF;
-        body_find_contact(myself.body, world, coord(0,1,0), 1, floor, distance);
+        body_find_contact(myself.body, world, coord(0,1+safety,0), 1+safety, floor, distance);
         static contact lastfloor = floor;
         bool jumped = false;
         // FIXME: give some kind of subframe behavior to jumping so that the bunnyhopping "interval" is fully framerate independent
@@ -5066,7 +5084,7 @@ int main (int argc, char ** argv)
         
         contact newfloor = no_contact;
         double newdistance = INF;
-        body_find_contact(myself.body, world, coord(0,speed+step_size+safety,0), speed+step_size, newfloor, newdistance);
+        body_find_contact(myself.body, world, coord(0,speed+step_size+safety,0), speed+step_size+safety, newfloor, newdistance);
         newdistance = max(newdistance, 0);
         
         if(floor.found and -dot(coord(0,1,0), floor.normal) > 0.7 and newdistance > 0 and newdistance != INF and !jumped)
@@ -5182,6 +5200,10 @@ int main (int argc, char ** argv)
         
         //if(drawme) myrenderer.display_stew(&myself.body.collision, x, y, z);
         if(drawme) myrenderer.display_stew(&fakebody, x, y, z);
+        
+        printf("pos %.20f %.20f %.20f vel %016llX %016llX %016llX\n", x, y, z, myself.body.xspeed, myself.body.yspeed, myself.body.zspeed);
+        if(x != x)
+            exit(0);
         
         myrenderer.display_cubemap(sky);
         
