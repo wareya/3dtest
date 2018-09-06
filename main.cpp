@@ -5201,9 +5201,9 @@ int main (int argc, char ** argv)
         //if(drawme) myrenderer.display_stew(&myself.body.collision, x, y, z);
         if(drawme) myrenderer.display_stew(&fakebody, x, y, z);
         
-        printf("pos %.20f %.20f %.20f vel %016llX %016llX %016llX\n", x, y, z, myself.body.xspeed, myself.body.yspeed, myself.body.zspeed);
-        if(x != x)
-            exit(0);
+        //printf("pos %.20f %.20f %.20f vel %016llX %016llX %016llX\n", x, y, z, myself.body.xspeed, myself.body.yspeed, myself.body.zspeed);
+        //if(x != x)
+        //    exit(0);
         
         myrenderer.display_cubemap(sky);
         
